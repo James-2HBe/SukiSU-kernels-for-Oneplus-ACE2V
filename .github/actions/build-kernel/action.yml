@@ -1441,6 +1441,116 @@ runs:
         echo "✅ SUSFS inline patch step completed"
         echo "::endgroup::"
 
+    - name: Fix SukiSU internal header layout
+      shell: bash
+      if: ${{ inputs.ksu_type == 'SUKISU' }}
+      run: |
+        set -euo pipefail
+
+        echo "::group::Fix SukiSU internal header layout"
+
+        KSU_BUILTIN_DIR="$COMMON_KERNEL_FOLDER/drivers/kernelsu"
+        KSU_SOURCE_DIR="$KERNEL_PLATFORM_FOLDER/KernelSU/kernel"
+
+        echo "KSU builtin dir: $KSU_BUILTIN_DIR"
+        echo "KSU source dir:  $KSU_SOURCE_DIR"
+
+        if [ ! -d "$KSU_BUILTIN_DIR" ]; then
+          echo "::warning::Builtin SukiSU directory not found: $KSU_BUILTIN_DIR"
+          echo "::endgroup::"
+          exit 0
+        fi
+
+        if [ ! -d "$KSU_SOURCE_DIR" ]; then
+          echo "::warning::SukiSU source directory not found: $KSU_SOURCE_DIR"
+          echo "::endgroup::"
+          exit 0
+        fi
+
+        echo "Searching for required SukiSU headers..."
+
+        APP_PROFILE_SRC="$(
+          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+            -type f \
+            -path '*/uapi/app_profile.h' \
+            -print \
+            2>/dev/null | head -n1 || true
+        )"
+
+        KLOG_SRC="$(
+          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+            -type f \
+            -name 'klog.h' \
+            -print \
+            2>/dev/null | head -n1 || true
+        )"
+
+        echo "Found app_profile.h: ${APP_PROFILE_SRC:-not found}"
+        echo "Found klog.h:        ${KLOG_SRC:-not found}"
+
+        if [ -n "$APP_PROFILE_SRC" ]; then
+          mkdir -p "$KSU_BUILTIN_DIR/policy/uapi"
+          cp -f "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+          echo "Installed app_profile.h to $KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+        else
+          echo "::warning::Could not find app_profile.h in SukiSU source tree"
+        fi
+
+        if [ -n "$KLOG_SRC" ]; then
+          cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
+          cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
+          echo "Installed klog.h to:"
+          echo "  $KSU_BUILTIN_DIR/feature/klog.h"
+          echo "  $KSU_BUILTIN_DIR/klog.h"
+        else
+          echo "::warning::Could not find klog.h in SukiSU source tree"
+        fi
+
+        KSU_MAKEFILE="$KSU_BUILTIN_DIR/Makefile"
+
+        if [ -f "$KSU_MAKEFILE" ]; then
+          if ! grep -q 'SukiSU internal include compatibility' "$KSU_MAKEFILE"; then
+            cat >> "$KSU_MAKEFILE" <<'EOF'
+
+              # SukiSU internal include compatibility
+              ccflags-y += -I$(srctree)/drivers/kernelsu
+              ccflags-y += -I$(srctree)/drivers/kernelsu/include
+              ccflags-y += -I$(srctree)/drivers/kernelsu/policy
+              ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi
+              ccflags-y += -I$(srctree)/drivers/kernelsu/feature
+              EOF
+            echo "Added SukiSU include compatibility flags to $KSU_MAKEFILE"
+          else
+            echo "SukiSU include compatibility flags already present"
+          fi
+        else
+          echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
+        fi
+
+        echo "Verifying repaired header paths..."
+
+        REQUIRED_HEADERS=(
+          "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+          "$KSU_BUILTIN_DIR/feature/klog.h"
+        )
+
+        MISSING=0
+
+        for h in "${REQUIRED_HEADERS[@]}"; do
+          if [ -f "$h" ]; then
+            echo "✅ $h"
+          else
+            echo "::warning::Missing after repair: $h"
+            MISSING=$((MISSING + 1))
+          fi
+        done
+
+        if [ "$MISSING" -gt 0 ]; then
+          echo "::warning::Some SukiSU headers are still missing. Build may fail if this SukiSU revision requires them."
+        fi
+
+        echo "::endgroup::"
+
     - name: Verify SukiSU/SUSFS symbols after patch
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
