@@ -1467,36 +1467,91 @@ runs:
           exit 0
         fi
 
+        safe_copy_header() {
+          local src="$1"
+          local dst="$2"
+
+          if [ -z "$src" ] || [ ! -f "$src" ]; then
+            echo "::warning::safe_copy_header source missing: ${src:-unset}"
+            return 0
+          fi
+
+          mkdir -p "$(dirname "$dst")"
+
+          if [ -e "$dst" ] && [ "$src" -ef "$dst" ]; then
+            echo "Skipping copy; source and destination are same file:"
+            echo "  $src"
+            echo "  $dst"
+            return 0
+          fi
+
+          cp -f "$src" "$dst"
+
+          echo "Copied:"
+          echo "  from: $src"
+          echo "  to:   $dst"
+        }
+
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
         mkdir -p "$POLICY_UAPI_DIR"
 
         echo "Searching for SukiSU helper headers..."
 
-        KLOG_SRC="$(
-          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
-            -type f \
-            -name 'klog.h' \
-            -print \
-            2>/dev/null | head -n1 || true
-        )"
+        KLOG_SRC=""
 
-        KSU_H_SRC="$(
-          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
-            -type f \
-            -name 'ksu.h' \
-            -print \
-            2>/dev/null | head -n1 || true
-        )"
+        for candidate in \
+          "$KSU_SOURCE_DIR/include/klog.h" \
+          "$KSU_SOURCE_DIR/klog.h" \
+          "$KSU_BUILTIN_DIR/include/klog.h" \
+          "$KSU_BUILTIN_DIR/klog.h" \
+          "$KSU_BUILTIN_DIR/feature/klog.h"; do
+          if [ -f "$candidate" ]; then
+            KLOG_SRC="$candidate"
+            break
+          fi
+        done
+
+        if [ -z "$KLOG_SRC" ]; then
+          KLOG_SRC="$(
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name 'klog.h' \
+              -print \
+              2>/dev/null | head -n1 || true
+          )"
+        fi
+
+        KSU_H_SRC=""
+
+        for candidate in \
+          "$KSU_SOURCE_DIR/include/ksu.h" \
+          "$KSU_SOURCE_DIR/ksu.h" \
+          "$KSU_BUILTIN_DIR/include/ksu.h" \
+          "$KSU_BUILTIN_DIR/ksu.h"; do
+          if [ -f "$candidate" ]; then
+            KSU_H_SRC="$candidate"
+            break
+          fi
+        done
+
+        if [ -z "$KSU_H_SRC" ]; then
+          KSU_H_SRC="$(
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name 'ksu.h' \
+              -print \
+              2>/dev/null | head -n1 || true
+          )"
+        fi
 
         echo "Found klog.h: ${KLOG_SRC:-not found}"
         echo "Found ksu.h:  ${KSU_H_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
-          mkdir -p "$KSU_BUILTIN_DIR/feature"
-          cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
-          cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
+          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
+          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
 
-          echo "Installed klog.h to:"
+          echo "Installed/verified klog.h locations:"
           echo "  $KSU_BUILTIN_DIR/feature/klog.h"
           echo "  $KSU_BUILTIN_DIR/klog.h"
         else
@@ -1504,16 +1559,12 @@ runs:
         fi
 
         if [ -n "$KSU_H_SRC" ]; then
-          mkdir -p "$KSU_BUILTIN_DIR/include"
-          mkdir -p "$KSU_BUILTIN_DIR/core"
-          mkdir -p "$KSU_BUILTIN_DIR/feature"
+          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/ksu.h"
+          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/include/ksu.h"
+          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/core/ksu.h"
+          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/feature/ksu.h"
 
-          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/ksu.h"
-          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/include/ksu.h"
-          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/core/ksu.h"
-          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/feature/ksu.h"
-
-          echo "Installed ksu.h to:"
+          echo "Installed/verified ksu.h locations:"
           echo "  $KSU_BUILTIN_DIR/ksu.h"
           echo "  $KSU_BUILTIN_DIR/include/ksu.h"
           echo "  $KSU_BUILTIN_DIR/core/ksu.h"
@@ -1601,6 +1652,11 @@ runs:
             if ! grep -q 'drivers/kernelsu/feature' "$KSU_MAKEFILE"; then
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature' >> "$KSU_MAKEFILE"
               echo "Added missing feature include path"
+            fi
+
+            if ! grep -q 'drivers/kernelsu/include' "$KSU_MAKEFILE"; then
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include' >> "$KSU_MAKEFILE"
+              echo "Added missing include path"
             fi
           fi
         else
@@ -1697,6 +1753,9 @@ runs:
 
         echo "Dumping ksu.h locations:"
         find "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
+
+        echo "Dumping klog.h locations:"
+        find "$KSU_BUILTIN_DIR" -type f -name 'klog.h' -print || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
