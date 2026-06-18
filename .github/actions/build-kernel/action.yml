@@ -1062,23 +1062,35 @@ runs:
         ROOT="$KERNEL_PLATFORM_FOLDER"
         WARNINGS=0
 
+        SEARCH_PATHS=(
+          "$ROOT/KernelSU/kernel"
+          "$ROOT/common/drivers/kernelsu"
+          "$ROOT/common/fs"
+          "$ROOT/common/include"
+          "$ROOT/common/kernel"
+        )
+
         check_symbol() {
           local symbol="$1"
+          local tmp
+          tmp="$(mktemp)"
+
           echo ""
           echo "Checking symbol: $symbol"
 
-          if grep -R --line-number "$symbol" \
-            "$ROOT/KernelSU/kernel" \
-            "$ROOT/common/drivers/kernelsu" \
-            "$ROOT/common/fs" \
-            "$ROOT/common/include" \
-            "$ROOT/common/kernel" \
-            2>/dev/null | head -n 20; then
+          if grep -R --line-number \
+            --exclude='*.orig' \
+            --exclude='*.rej' \
+            --exclude='*.bak' \
+            "$symbol" "${SEARCH_PATHS[@]}" > "$tmp" 2>/dev/null; then
+            head -n 20 "$tmp"
             echo "✅ Found: $symbol"
           else
             echo "::warning::Symbol not found or not visible: $symbol"
             WARNINGS=$((WARNINGS + 1))
           fi
+
+          rm -f "$tmp"
         }
 
         check_symbol "susfs_init"
