@@ -1467,15 +1467,10 @@ runs:
           exit 0
         fi
 
-        echo "Searching for required SukiSU headers..."
+        POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
+        mkdir -p "$POLICY_UAPI_DIR"
 
-        APP_PROFILE_SRC="$(
-          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
-            -type f \
-            \( -path '*/uapi/app_profile.h' -o -name 'app_profile.h' \) \
-            -print \
-            2>/dev/null | head -n1 || true
-        )"
+        echo "Searching for SukiSU helper headers..."
 
         KLOG_SRC="$(
           find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
@@ -1485,44 +1480,70 @@ runs:
             2>/dev/null | head -n1 || true
         )"
 
-        echo "Found app_profile.h: ${APP_PROFILE_SRC:-not found}"
-        echo "Found klog.h:        ${KLOG_SRC:-not found}"
-
-        mkdir -p "$KSU_BUILTIN_DIR/policy/uapi"
-
-        if [ -n "$APP_PROFILE_SRC" ]; then
-          cp -f "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
-          echo "Installed app_profile.h to $KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
-        else
-          echo "::warning::Could not find app_profile.h in SukiSU source tree"
-          echo "Creating minimal compatibility app_profile.h stub"
-
-          {
-            printf '%s\n' '#ifndef __KSU_APP_PROFILE_H'
-            printf '%s\n' '#define __KSU_APP_PROFILE_H'
-            printf '%s\n' ''
-            printf '%s\n' '/*'
-            printf '%s\n' ' * Compatibility stub for SukiSU source layouts where app_profile.h is not'
-            printf '%s\n' ' * shipped in the integrated kernel tree.'
-            printf '%s\n' ' *'
-            printf '%s\n' ' * This header is intentionally minimal. It only satisfies include resolution.'
-            printf '%s\n' ' */'
-            printf '%s\n' ''
-            printf '%s\n' '#endif /* __KSU_APP_PROFILE_H */'
-          } > "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
-
-          echo "Created stub: $KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
-        fi
+        echo "Found klog.h: ${KLOG_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
           mkdir -p "$KSU_BUILTIN_DIR/feature"
           cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
           cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
+
           echo "Installed klog.h to:"
           echo "  $KSU_BUILTIN_DIR/feature/klog.h"
           echo "  $KSU_BUILTIN_DIR/klog.h"
         else
           echo "::warning::Could not find klog.h in SukiSU source tree"
+        fi
+
+        echo "Creating safe compatibility policy/uapi/app_profile.h"
+
+        {
+          printf '%s\n' '#ifndef __KSU_POLICY_UAPI_APP_PROFILE_H'
+          printf '%s\n' '#define __KSU_POLICY_UAPI_APP_PROFILE_H'
+          printf '%s\n' ''
+          printf '%s\n' '/*'
+          printf '%s\n' ' * SukiSU compatibility shim.'
+          printf '%s\n' ' *'
+          printf '%s\n' ' * Some SukiSU installer layouts reference policy/uapi/app_profile.h'
+          printf '%s\n' ' * but do not provide a usable standalone header in the integrated'
+          printf '%s\n' ' * kernel tree. This shim intentionally avoids recursive includes.'
+          printf '%s\n' ' */'
+          printf '%s\n' ''
+          printf '%s\n' '#endif /* __KSU_POLICY_UAPI_APP_PROFILE_H */'
+        } > "$POLICY_UAPI_DIR/app_profile.h"
+
+        echo "Created: $POLICY_UAPI_DIR/app_profile.h"
+
+        echo "Creating safe compatibility policy/uapi/feature.h"
+
+        {
+          printf '%s\n' '#ifndef __KSU_POLICY_UAPI_FEATURE_H'
+          printf '%s\n' '#define __KSU_POLICY_UAPI_FEATURE_H'
+          printf '%s\n' ''
+          printf '%s\n' '/*'
+          printf '%s\n' ' * SukiSU compatibility shim.'
+          printf '%s\n' ' *'
+          printf '%s\n' ' * policy/feature.h includes "uapi/feature.h". Some integrated'
+          printf '%s\n' ' * source layouts are missing that file, so this shim satisfies'
+          printf '%s\n' ' * include resolution without pulling in recursive paths.'
+          printf '%s\n' ' */'
+          printf '%s\n' ''
+          printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
+        } > "$POLICY_UAPI_DIR/feature.h"
+
+        echo "Created: $POLICY_UAPI_DIR/feature.h"
+
+        echo "Checking for accidental recursive includes"
+
+        if grep -q 'uapi/app_profile.h' "$POLICY_UAPI_DIR/app_profile.h"; then
+          echo "::error::Recursive include still present in $POLICY_UAPI_DIR/app_profile.h"
+          sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
+          exit 1
+        fi
+
+        if grep -q 'uapi/feature.h' "$POLICY_UAPI_DIR/feature.h"; then
+          echo "::error::Recursive include still present in $POLICY_UAPI_DIR/feature.h"
+          sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
+          exit 1
         fi
 
         KSU_MAKEFILE="$KSU_BUILTIN_DIR/Makefile"
@@ -1550,7 +1571,8 @@ runs:
         echo "Verifying repaired header paths..."
 
         REQUIRED_HEADERS=(
-          "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+          "$POLICY_UAPI_DIR/app_profile.h"
+          "$POLICY_UAPI_DIR/feature.h"
           "$KSU_BUILTIN_DIR/feature/klog.h"
         )
 
@@ -1565,10 +1587,11 @@ runs:
           fi
         done
 
-        echo "Dumping repaired app_profile.h preview:"
-        if [ -f "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" ]; then
-          sed -n '1,40p' "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" || true
-        fi
+        echo "Dumping app_profile.h preview:"
+        sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
+
+        echo "Dumping feature.h preview:"
+        sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
