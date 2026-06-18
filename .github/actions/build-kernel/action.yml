@@ -1492,68 +1492,115 @@ runs:
           echo "  to:   $dst"
         }
 
+        safe_sync_dir() {
+          local src_dir="$1"
+          local dst_dir="$2"
+
+          if [ -z "$src_dir" ] || [ ! -d "$src_dir" ]; then
+            echo "Skipping directory sync; source missing: ${src_dir:-unset}"
+            return 0
+          fi
+
+          mkdir -p "$dst_dir"
+
+          echo "Syncing directory:"
+          echo "  from: $src_dir"
+          echo "  to:   $dst_dir"
+
+          find "$src_dir" -type f | while IFS= read -r src_file; do
+            rel="${src_file#$src_dir/}"
+            dst_file="$dst_dir/$rel"
+            safe_copy_header "$src_file" "$dst_file"
+          done
+        }
+
+        find_first_header() {
+          local name="$1"
+          shift
+
+          local candidate
+
+          for candidate in "$@"; do
+            if [ -f "$candidate" ]; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+          done
+
+          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+            -type f \
+            -name "$name" \
+            -print \
+            2>/dev/null | head -n1 || true
+        }
+
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
         mkdir -p "$POLICY_UAPI_DIR"
 
+        echo "Syncing SukiSU include trees"
+
+        safe_sync_dir "$KSU_SOURCE_DIR/include" "$KSU_BUILTIN_DIR/include"
+        safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+
         echo "Searching for SukiSU helper headers..."
 
-        KLOG_SRC=""
+        KLOG_SRC="$(
+          find_first_header \
+            "klog.h" \
+            "$KSU_SOURCE_DIR/include/klog.h" \
+            "$KSU_SOURCE_DIR/klog.h" \
+            "$KSU_BUILTIN_DIR/include/klog.h" \
+            "$KSU_BUILTIN_DIR/klog.h" \
+            "$KSU_BUILTIN_DIR/feature/klog.h"
+        )"
 
-        for candidate in \
-          "$KSU_SOURCE_DIR/include/klog.h" \
-          "$KSU_SOURCE_DIR/klog.h" \
-          "$KSU_BUILTIN_DIR/include/klog.h" \
-          "$KSU_BUILTIN_DIR/klog.h" \
-          "$KSU_BUILTIN_DIR/feature/klog.h"; do
-          if [ -f "$candidate" ]; then
-            KLOG_SRC="$candidate"
-            break
-          fi
-        done
+        KSU_H_SRC="$(
+          find_first_header \
+            "ksu.h" \
+            "$KSU_SOURCE_DIR/include/ksu.h" \
+            "$KSU_SOURCE_DIR/ksu.h" \
+            "$KSU_BUILTIN_DIR/include/ksu.h" \
+            "$KSU_BUILTIN_DIR/ksu.h"
+        )"
 
-        if [ -z "$KLOG_SRC" ]; then
-          KLOG_SRC="$(
-            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
-              -type f \
-              -name 'klog.h' \
-              -print \
-              2>/dev/null | head -n1 || true
-          )"
-        fi
+        ARCH_H_SRC="$(
+          find_first_header \
+            "arch.h" \
+            "$KSU_SOURCE_DIR/include/arch.h" \
+            "$KSU_SOURCE_DIR/arch.h" \
+            "$KSU_BUILTIN_DIR/include/arch.h" \
+            "$KSU_BUILTIN_DIR/arch.h"
+        )"
 
-        KSU_H_SRC=""
+        FEATURE_H_SRC="$(
+          find_first_header \
+            "feature.h" \
+            "$KSU_SOURCE_DIR/include/feature.h" \
+            "$KSU_SOURCE_DIR/feature.h" \
+            "$KSU_BUILTIN_DIR/include/feature.h" \
+            "$KSU_BUILTIN_DIR/feature.h"
+        )"
 
-        for candidate in \
-          "$KSU_SOURCE_DIR/include/ksu.h" \
-          "$KSU_SOURCE_DIR/ksu.h" \
-          "$KSU_BUILTIN_DIR/include/ksu.h" \
-          "$KSU_BUILTIN_DIR/ksu.h"; do
-          if [ -f "$candidate" ]; then
-            KSU_H_SRC="$candidate"
-            break
-          fi
-        done
+        SULOG_UAPI_SRC="$(
+          find_first_header \
+            "sulog.h" \
+            "$KSU_SOURCE_DIR/include/uapi/sulog.h" \
+            "$KSU_SOURCE_DIR/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/uapi/sulog.h"
+        )"
 
-        if [ -z "$KSU_H_SRC" ]; then
-          KSU_H_SRC="$(
-            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
-              -type f \
-              -name 'ksu.h' \
-              -print \
-              2>/dev/null | head -n1 || true
-          )"
-        fi
-
-        echo "Found klog.h: ${KLOG_SRC:-not found}"
-        echo "Found ksu.h:  ${KSU_H_SRC:-not found}"
+        echo "Found klog.h:       ${KLOG_SRC:-not found}"
+        echo "Found ksu.h:        ${KSU_H_SRC:-not found}"
+        echo "Found arch.h:       ${ARCH_H_SRC:-not found}"
+        echo "Found feature.h:    ${FEATURE_H_SRC:-not found}"
+        echo "Found uapi/sulog.h: ${SULOG_UAPI_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
           safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
           safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
-
-          echo "Installed/verified klog.h locations:"
-          echo "  $KSU_BUILTIN_DIR/feature/klog.h"
-          echo "  $KSU_BUILTIN_DIR/klog.h"
+          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/include/klog.h"
         else
           echo "::warning::Could not find klog.h in SukiSU source tree"
         fi
@@ -1563,15 +1610,33 @@ runs:
           safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/include/ksu.h"
           safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/core/ksu.h"
           safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/feature/ksu.h"
-
-          echo "Installed/verified ksu.h locations:"
-          echo "  $KSU_BUILTIN_DIR/ksu.h"
-          echo "  $KSU_BUILTIN_DIR/include/ksu.h"
-          echo "  $KSU_BUILTIN_DIR/core/ksu.h"
-          echo "  $KSU_BUILTIN_DIR/feature/ksu.h"
         else
           echo "::warning::Could not find ksu.h in SukiSU source tree"
-          echo "::warning::Build may still fail if this SukiSU revision requires ksu.h"
+        fi
+
+        if [ -n "$ARCH_H_SRC" ]; then
+          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/arch.h"
+          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/include/arch.h"
+          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/feature/arch.h"
+        else
+          echo "::warning::Could not find arch.h in SukiSU source tree"
+        fi
+
+        if [ -n "$FEATURE_H_SRC" ]; then
+          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature.h"
+          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/include/feature.h"
+          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
+        else
+          echo "::warning::Could not find real SukiSU feature.h"
+          echo "::warning::KSU_FEATURE_KERNEL_UMOUNT may remain undefined"
+        fi
+
+        if [ -n "$SULOG_UAPI_SRC" ]; then
+          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/uapi/sulog.h"
+          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
+          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
+        else
+          echo "::warning::Could not find uapi/sulog.h in SukiSU source tree"
         fi
 
         echo "Creating safe compatibility policy/uapi/app_profile.h"
@@ -1634,8 +1699,12 @@ runs:
               printf '%s\n' '# SukiSU internal include compatibility'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/uapi'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/core'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog/uapi'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi'
             } >> "$KSU_MAKEFILE"
@@ -1644,20 +1713,23 @@ runs:
           else
             echo "SukiSU include compatibility flags already present"
 
-            if ! grep -q 'drivers/kernelsu/core' "$KSU_MAKEFILE"; then
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/core' >> "$KSU_MAKEFILE"
-              echo "Added missing core include path"
-            fi
+            for inc in \
+              'drivers/kernelsu' \
+              'drivers/kernelsu/include' \
+              'drivers/kernelsu/include/uapi' \
+              'drivers/kernelsu/uapi' \
+              'drivers/kernelsu/core' \
+              'drivers/kernelsu/feature' \
+              'drivers/kernelsu/sulog' \
+              'drivers/kernelsu/sulog/uapi' \
+              'drivers/kernelsu/policy' \
+              'drivers/kernelsu/policy/uapi'; do
 
-            if ! grep -q 'drivers/kernelsu/feature' "$KSU_MAKEFILE"; then
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature' >> "$KSU_MAKEFILE"
-              echo "Added missing feature include path"
-            fi
-
-            if ! grep -q 'drivers/kernelsu/include' "$KSU_MAKEFILE"; then
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include' >> "$KSU_MAKEFILE"
-              echo "Added missing include path"
-            fi
+              if ! grep -q "$inc" "$KSU_MAKEFILE"; then
+                printf '%s\n' "ccflags-y += -I\$(srctree)/$inc" >> "$KSU_MAKEFILE"
+                echo "Added missing include path: $inc"
+              fi
+            done
           fi
         else
           echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
@@ -1759,6 +1831,15 @@ runs:
           "$KSU_BUILTIN_DIR/include/ksu.h"
           "$KSU_BUILTIN_DIR/core/ksu.h"
           "$KSU_BUILTIN_DIR/feature/ksu.h"
+          "$KSU_BUILTIN_DIR/arch.h"
+          "$KSU_BUILTIN_DIR/include/arch.h"
+          "$KSU_BUILTIN_DIR/feature/arch.h"
+          "$KSU_BUILTIN_DIR/feature.h"
+          "$KSU_BUILTIN_DIR/include/feature.h"
+          "$KSU_BUILTIN_DIR/feature/feature.h"
+          "$KSU_BUILTIN_DIR/uapi/sulog.h"
+          "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
+          "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
         )
 
         MISSING=0
@@ -1772,17 +1853,40 @@ runs:
           fi
         done
 
+        echo "Checking KSU_FEATURE_KERNEL_UMOUNT definition:"
+        grep -R --line-number 'KSU_FEATURE_KERNEL_UMOUNT' \
+          "$KSU_BUILTIN_DIR" \
+          "$KSU_SOURCE_DIR" \
+          2>/dev/null || true
+
         echo "Dumping app_profile.h preview:"
         sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
 
-        echo "Dumping feature.h preview:"
+        echo "Dumping policy/uapi/feature.h preview:"
         sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
+
+        echo "Dumping real feature.h candidates:"
+        for f in \
+          "$KSU_BUILTIN_DIR/feature.h" \
+          "$KSU_BUILTIN_DIR/include/feature.h" \
+          "$KSU_BUILTIN_DIR/feature/feature.h"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|enum|define' "$f" || sed -n '1,80p' "$f" || true
+          fi
+        done
 
         echo "Dumping ksu.h locations:"
         find -L "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
 
         echo "Dumping klog.h locations:"
         find -L "$KSU_BUILTIN_DIR" -type f -name 'klog.h' -print || true
+
+        echo "Dumping arch.h locations:"
+        find -L "$KSU_BUILTIN_DIR" -type f -name 'arch.h' -print || true
+
+        echo "Dumping sulog.h locations:"
+        find -L "$KSU_BUILTIN_DIR" -type f -name 'sulog.h' -print || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
