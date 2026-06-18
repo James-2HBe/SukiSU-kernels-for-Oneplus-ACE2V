@@ -1503,9 +1503,9 @@ runs:
           printf '%s\n' '/*'
           printf '%s\n' ' * SukiSU compatibility shim.'
           printf '%s\n' ' *'
-          printf '%s\n' ' * Some SukiSU installer layouts reference policy/uapi/app_profile.h'
-          printf '%s\n' ' * but do not provide a usable standalone header in the integrated'
-          printf '%s\n' ' * kernel tree. This shim intentionally avoids recursive includes.'
+          printf '%s\n' ' * Some SukiSU installer layouts expect this policy uapi header,'
+          printf '%s\n' ' * but certain integrated kernel trees do not ship a standalone copy.'
+          printf '%s\n' ' * This shim intentionally avoids recursive includes.'
           printf '%s\n' ' */'
           printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_POLICY_UAPI_APP_PROFILE_H */'
@@ -1522,9 +1522,8 @@ runs:
           printf '%s\n' '/*'
           printf '%s\n' ' * SukiSU compatibility shim.'
           printf '%s\n' ' *'
-          printf '%s\n' ' * policy/feature.h includes "uapi/feature.h". Some integrated'
-          printf '%s\n' ' * source layouts are missing that file, so this shim satisfies'
-          printf '%s\n' ' * include resolution without pulling in recursive paths.'
+          printf '%s\n' ' * Some integrated source layouts are missing this policy uapi header.'
+          printf '%s\n' ' * This shim satisfies include resolution without recursive paths.'
           printf '%s\n' ' */'
           printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
@@ -1532,15 +1531,15 @@ runs:
 
         echo "Created: $POLICY_UAPI_DIR/feature.h"
 
-        echo "Checking for accidental recursive includes"
+        echo "Checking for accidental recursive include directives"
 
-        if grep -q 'uapi/app_profile.h' "$POLICY_UAPI_DIR/app_profile.h"; then
+        if grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/app_profile\.h[">]' "$POLICY_UAPI_DIR/app_profile.h"; then
           echo "::error::Recursive include still present in $POLICY_UAPI_DIR/app_profile.h"
           sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
           exit 1
         fi
 
-        if grep -q 'uapi/feature.h' "$POLICY_UAPI_DIR/feature.h"; then
+        if grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/feature\.h[">]' "$POLICY_UAPI_DIR/feature.h"; then
           echo "::error::Recursive include still present in $POLICY_UAPI_DIR/feature.h"
           sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
           exit 1
