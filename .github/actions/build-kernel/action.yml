@@ -1534,39 +1534,6 @@ runs:
             2>/dev/null | head -n1 || true
         }
 
-        inject_feature_id_fallback() {
-          local file="$1"
-          local marker="$2"
-          local macro="$3"
-          local value="$4"
-
-          if [ ! -f "$file" ]; then
-            echo "::warning::Feature source not found: $file"
-            return 0
-          fi
-
-          if grep -q "$marker" "$file"; then
-            echo "$macro fallback already present in $file"
-            return 0
-          fi
-
-          tmp_file="$(mktemp)"
-
-          {
-            printf '%s\n' "/* $marker */"
-            printf '%s\n' "#ifndef $macro"
-            printf '%s\n' "#define $macro $value"
-            printf '%s\n' '#endif'
-            printf '%s\n' ''
-            cat "$file"
-          } > "$tmp_file"
-
-          cat "$tmp_file" > "$file"
-          rm -f "$tmp_file"
-
-          echo "Injected $macro fallback into $file"
-        }
-
         inject_include_once() {
           local file="$1"
           local marker="$2"
@@ -1595,6 +1562,22 @@ runs:
           rm -f "$tmp_file"
 
           echo "Injected include into $file: $include_line"
+        }
+
+        strip_old_feature_macro_fallbacks() {
+          local file="$1"
+
+          if [ ! -f "$file" ]; then
+            return 0
+          fi
+
+          perl -0777 -i -pe '
+            s@/\* SukiSU direct feature-id fallback: kernel_umount \*/\n#ifndef KSU_FEATURE_KERNEL_UMOUNT\n#define KSU_FEATURE_KERNEL_UMOUNT[^\n]*\n#endif\n\n@@g;
+            s@/\* SukiSU direct feature-id fallback: sulog \*/\n#ifndef KSU_FEATURE_SULOG\n#define KSU_FEATURE_SULOG[^\n]*\n#endif\n\n@@g;
+            s@/\* SukiSU direct feature-id fallback: sucompat \*/\n#ifndef KSU_FEATURE_SU_COMPAT\n#define KSU_FEATURE_SU_COMPAT[^\n]*\n#endif\n\n@@g;
+          ' "$file"
+
+          echo "Stripped old direct feature macro fallbacks from: $file"
         }
 
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
@@ -1736,7 +1719,7 @@ runs:
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
         else
-          echo "::warning::Real app_profile.h with profile structs not found. Creating fallback policy_compat.h."
+          echo "::warning::Real app_profile.h with profile structs not found. policy_compat.h fallback will be used."
         fi
 
         echo "Installing policy/uapi/feature.h"
@@ -1750,12 +1733,26 @@ runs:
             printf '%s\n' '#ifndef __KSU_POLICY_UAPI_FEATURE_H'
             printf '%s\n' '#define __KSU_POLICY_UAPI_FEATURE_H'
             printf '%s\n' ''
-            printf '%s\n' '/* SukiSU compatibility shim. */'
+            printf '%s\n' 'enum ksu_feature_id {'
+            printf '%s\n' '    KSU_FEATURE_SU_COMPAT = 0,'
+            printf '%s\n' '    KSU_FEATURE_KERNEL_UMOUNT = 1,'
+            printf '%s\n' '    KSU_FEATURE_SULOG = 2,'
+            printf '%s\n' '};'
             printf '%s\n' ''
             printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
           } > "$POLICY_UAPI_DIR/feature.h"
-          echo "Created fallback: $POLICY_UAPI_DIR/feature.h"
+
+          safe_copy_header "$POLICY_UAPI_DIR/feature.h" "$KSU_BUILTIN_DIR/uapi/feature.h"
+          safe_copy_header "$POLICY_UAPI_DIR/feature.h" "$KSU_BUILTIN_DIR/include/uapi/feature.h"
+
+          echo "Created enum fallback: $POLICY_UAPI_DIR/feature.h"
         fi
+
+        echo "Removing obsolete feature-id macro fallbacks"
+
+        strip_old_feature_macro_fallbacks "$KSU_BUILTIN_DIR/feature/kernel_umount.c"
+        strip_old_feature_macro_fallbacks "$KSU_BUILTIN_DIR/feature/sulog.c"
+        strip_old_feature_macro_fallbacks "$KSU_BUILTIN_DIR/feature/sucompat.c"
 
         echo "Creating SukiSU policy compatibility header"
 
@@ -1767,6 +1764,7 @@ runs:
           printf '%s\n' ''
           printf '%s\n' '#include <linux/types.h>'
           printf '%s\n' '#include <linux/capability.h>'
+          printf '%s\n' '#include "uapi/app_profile.h"'
           printf '%s\n' ''
           printf '%s\n' '#ifndef KSU_MAX_PACKAGE_NAME'
           printf '%s\n' '#define KSU_MAX_PACKAGE_NAME 256'
@@ -1787,41 +1785,6 @@ runs:
           printf '%s\n' '#ifndef KSU_NS_INHERITED'
           printf '%s\n' '#define KSU_NS_INHERITED 0'
           printf '%s\n' '#endif'
-          printf '%s\n' ''
-          printf '%s\n' 'struct ksu_capabilities_compat {'
-          printf '%s\n' '    kernel_cap_t effective;'
-          printf '%s\n' '    kernel_cap_t permitted;'
-          printf '%s\n' '    kernel_cap_t inheritable;'
-          printf '%s\n' '};'
-          printf '%s\n' ''
-          printf '%s\n' '#ifndef __KSU_APP_PROFILE_STRUCT_FALLBACK'
-          printf '%s\n' '#define __KSU_APP_PROFILE_STRUCT_FALLBACK'
-          printf '%s\n' ''
-          printf '%s\n' 'struct root_profile {'
-          printf '%s\n' '    uid_t uid;'
-          printf '%s\n' '    gid_t gid;'
-          printf '%s\n' '    u32 groups_count;'
-          printf '%s\n' '    gid_t groups[KSU_MAX_GROUPS];'
-          printf '%s\n' '    struct ksu_capabilities_compat capabilities;'
-          printf '%s\n' '    u32 namespaces;'
-          printf '%s\n' '    char selinux_domain[64];'
-          printf '%s\n' '    u32 flags;'
-          printf '%s\n' '};'
-          printf '%s\n' ''
-          printf '%s\n' 'struct non_root_profile {'
-          printf '%s\n' '    bool umount_modules;'
-          printf '%s\n' '};'
-          printf '%s\n' ''
-          printf '%s\n' 'struct app_profile {'
-          printf '%s\n' '    u32 version;'
-          printf '%s\n' '    char key[KSU_MAX_PACKAGE_NAME];'
-          printf '%s\n' '    uid_t current_uid;'
-          printf '%s\n' '    bool allow_su;'
-          printf '%s\n' '    struct root_profile root_profile;'
-          printf '%s\n' '    struct non_root_profile non_root_profile;'
-          printf '%s\n' '};'
-          printf '%s\n' ''
-          printf '%s\n' '#endif /* __KSU_APP_PROFILE_STRUCT_FALLBACK */'
           printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_POLICY_COMPAT_H */'
         } > "$KSU_POLICY_COMPAT_H"
@@ -1887,11 +1850,18 @@ runs:
               fi
             done
           fi
+
+          echo "Removing obsolete forced feature_id_compat include from Makefile"
+
+          sed -i \
+            -e '/SukiSU feature-id compatibility/d' \
+            -e '/feature_id_compat\.h/d' \
+            "$KSU_MAKEFILE"
         else
           echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
         fi
 
-        echo "Creating SukiSU feature-id compatibility header"
+        echo "Creating harmless SukiSU feature-id compatibility header"
 
         KSU_FEATURE_COMPAT_H="$KSU_BUILTIN_DIR/feature_id_compat.h"
 
@@ -1899,62 +1869,19 @@ runs:
           printf '%s\n' '#ifndef __KSU_FEATURE_ID_COMPAT_H'
           printf '%s\n' '#define __KSU_FEATURE_ID_COMPAT_H'
           printf '%s\n' ''
-          printf '%s\n' '#ifndef KSU_FEATURE_KERNEL_UMOUNT'
-          printf '%s\n' '#define KSU_FEATURE_KERNEL_UMOUNT 1001'
-          printf '%s\n' '#endif'
-          printf '%s\n' ''
-          printf '%s\n' '#ifndef KSU_FEATURE_SULOG'
-          printf '%s\n' '#define KSU_FEATURE_SULOG 1002'
-          printf '%s\n' '#endif'
-          printf '%s\n' ''
-          printf '%s\n' '#ifndef KSU_FEATURE_SU_COMPAT'
-          printf '%s\n' '#define KSU_FEATURE_SU_COMPAT 1003'
-          printf '%s\n' '#endif'
+          printf '%s\n' '/*'
+          printf '%s\n' ' * Intentionally empty.'
+          printf '%s\n' ' *'
+          printf '%s\n' ' * Older workflow revisions used macro fallbacks here,'
+          printf '%s\n' ' * but SukiSU now provides enum feature IDs through'
+          printf '%s\n' ' * policy/uapi/feature.h. Macro fallbacks conflict with'
+          printf '%s\n' ' * enum members and must not be used.'
+          printf '%s\n' ' */'
           printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_FEATURE_ID_COMPAT_H */'
         } > "$KSU_FEATURE_COMPAT_H"
 
-        echo "Created: $KSU_FEATURE_COMPAT_H"
-
-        if [ -f "$KSU_MAKEFILE" ]; then
-          if ! grep -q 'feature_id_compat.h' "$KSU_MAKEFILE"; then
-            {
-              printf '%s\n' ''
-              printf '%s\n' '# SukiSU feature-id compatibility'
-              printf '%s\n' 'ccflags-y += -include $(srctree)/drivers/kernelsu/feature_id_compat.h'
-              printf '%s\n' 'subdir-ccflags-y += -include $(srctree)/drivers/kernelsu/feature_id_compat.h'
-            } >> "$KSU_MAKEFILE"
-
-            echo "Added forced feature_id_compat.h include to $KSU_MAKEFILE"
-          else
-            echo "feature_id_compat.h forced include already present"
-          fi
-        fi
-
-        echo "Patching direct SukiSU feature ID fallbacks into source files"
-
-        KERNEL_UMOUNT_C="$KSU_BUILTIN_DIR/feature/kernel_umount.c"
-        SULOG_C="$KSU_BUILTIN_DIR/feature/sulog.c"
-        SUCOMPAT_C="$KSU_BUILTIN_DIR/feature/sucompat.c"
-        SUCOMPAT_H="$KSU_BUILTIN_DIR/feature/sucompat.h"
-
-        inject_feature_id_fallback \
-          "$KERNEL_UMOUNT_C" \
-          "SukiSU direct feature-id fallback: kernel_umount" \
-          "KSU_FEATURE_KERNEL_UMOUNT" \
-          "1001"
-
-        inject_feature_id_fallback \
-          "$SULOG_C" \
-          "SukiSU direct feature-id fallback: sulog" \
-          "KSU_FEATURE_SULOG" \
-          "1002"
-
-        inject_feature_id_fallback \
-          "$SUCOMPAT_C" \
-          "SukiSU direct feature-id fallback: sucompat" \
-          "KSU_FEATURE_SU_COMPAT" \
-          "1003"
+        echo "Created harmless: $KSU_FEATURE_COMPAT_H"
 
         echo "Patching direct policy compatibility includes"
 
@@ -1979,6 +1906,9 @@ runs:
           '#include "../policy_compat.h"'
 
         echo "Checking SukiSU sucompat static-key compatibility"
+
+        SUCOMPAT_C="$KSU_BUILTIN_DIR/feature/sucompat.c"
+        SUCOMPAT_H="$KSU_BUILTIN_DIR/feature/sucompat.h"
 
         if grep -Rqs 'extern struct static_key_true ksu_su_compat_enabled' \
           "$COMMON_KERNEL_FOLDER/fs/exec.c" \
@@ -2069,6 +1999,8 @@ runs:
           "$KSU_BUILTIN_DIR/uapi/app_profile.h"
           "$KSU_BUILTIN_DIR/include/uapi/app_profile.h"
           "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
+          "$KSU_BUILTIN_DIR/uapi/feature.h"
+          "$KSU_BUILTIN_DIR/include/uapi/feature.h"
           "$KSU_BUILTIN_DIR/policy_compat.h"
           "$KSU_BUILTIN_DIR/feature/klog.h"
           "$KSU_BUILTIN_DIR/ksu.h"
@@ -2098,19 +2030,32 @@ runs:
           fi
         done
 
+        echo "Checking for forbidden feature macro fallbacks:"
+        for f in \
+          "$KSU_BUILTIN_DIR/feature/kernel_umount.c" \
+          "$KSU_BUILTIN_DIR/feature/sulog.c" \
+          "$KSU_BUILTIN_DIR/feature/sucompat.c" \
+          "$KSU_MAKEFILE"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            grep -nE '#define KSU_FEATURE_|feature_id_compat\.h|direct feature-id fallback' "$f" || true
+          fi
+        done
+
+        echo "Checking real SukiSU feature enum definitions:"
+        grep -R --line-number \
+          -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT|enum' \
+          "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/feature.h" \
+          2>/dev/null || true
+
         echo "Checking app profile definitions:"
         grep -R --line-number \
           -E 'struct app_profile|struct root_profile|struct non_root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS' \
           "$KSU_BUILTIN_DIR" \
           "$KSU_SOURCE_DIR" \
           2>/dev/null | head -n 120 || true
-
-        echo "Checking SukiSU feature ID definitions:"
-        grep -R --line-number \
-          -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT' \
-          "$KSU_BUILTIN_DIR" \
-          "$KSU_SOURCE_DIR" \
-          2>/dev/null || true
 
         echo "Dumping app_profile.h previews:"
         for f in \
@@ -2121,6 +2066,17 @@ runs:
           if [ -f "$f" ]; then
             echo "=== $f ==="
             sed -n '1,120p' "$f" || true
+          fi
+        done
+
+        echo "Dumping feature.h previews:"
+        for f in \
+          "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/feature.h"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,80p' "$f" || true
           fi
         done
 
@@ -2141,35 +2097,6 @@ runs:
           fi
         done
 
-        echo "Dumping feature_id_compat.h:"
-        if [ -f "$KSU_FEATURE_COMPAT_H" ]; then
-          sed -n '1,140p' "$KSU_FEATURE_COMPAT_H" || true
-        fi
-
-        echo "Dumping direct feature ID fallback state:"
-        for f in \
-          "$KSU_BUILTIN_DIR/feature/kernel_umount.c" \
-          "$KSU_BUILTIN_DIR/feature/sulog.c" \
-          "$KSU_BUILTIN_DIR/feature/sucompat.c"; do
-
-          if [ -f "$f" ]; then
-            echo "=== $f ==="
-            sed -n '1,50p' "$f" || true
-            grep -nE 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT|direct feature-id fallback' "$f" || true
-          fi
-        done
-
-        echo "Dumping real feature.h candidates:"
-        for f in \
-          "$KSU_BUILTIN_DIR/feature.h" \
-          "$KSU_BUILTIN_DIR/include/feature.h" \
-          "$KSU_BUILTIN_DIR/feature/feature.h"; do
-          if [ -f "$f" ]; then
-            echo "=== $f ==="
-            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|SULOG|SU_COMPAT|enum|define' "$f" || sed -n '1,80p' "$f" || true
-          fi
-        done
-
         echo "Dumping ksu.h locations:"
         find -L "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
 
@@ -2184,7 +2111,7 @@ runs:
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
-          grep -nE 'SukiSU internal include compatibility|SukiSU feature-id compatibility|drivers/kernelsu|feature_id_compat' "$KSU_MAKEFILE" || true
+          grep -nE 'SukiSU internal include compatibility|drivers/kernelsu|feature_id_compat' "$KSU_MAKEFILE" || true
         fi
 
         echo "Dumping sucompat compatibility state:"
