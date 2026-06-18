@@ -1567,6 +1567,36 @@ runs:
           echo "Injected $macro fallback into $file"
         }
 
+        inject_include_once() {
+          local file="$1"
+          local marker="$2"
+          local include_line="$3"
+
+          if [ ! -f "$file" ]; then
+            echo "::warning::Source not found for include injection: $file"
+            return 0
+          fi
+
+          if grep -q "$marker" "$file"; then
+            echo "Include marker already present in $file"
+            return 0
+          fi
+
+          tmp_file="$(mktemp)"
+
+          {
+            printf '%s\n' "/* $marker */"
+            printf '%s\n' "$include_line"
+            printf '%s\n' ''
+            cat "$file"
+          } > "$tmp_file"
+
+          cat "$tmp_file" > "$file"
+          rm -f "$tmp_file"
+
+          echo "Injected include into $file: $include_line"
+        }
+
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
         mkdir -p "$POLICY_UAPI_DIR"
 
@@ -1575,6 +1605,8 @@ runs:
         safe_sync_dir "$KSU_SOURCE_DIR/include" "$KSU_BUILTIN_DIR/include"
         safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/uapi"
         safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/policy/uapi" "$KSU_BUILTIN_DIR/policy/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/uapi" "$KSU_BUILTIN_DIR/uapi"
 
         echo "Searching for SukiSU helper headers..."
 
@@ -1624,11 +1656,36 @@ runs:
             "$KSU_BUILTIN_DIR/uapi/sulog.h"
         )"
 
-        echo "Found klog.h:       ${KLOG_SRC:-not found}"
-        echo "Found ksu.h:        ${KSU_H_SRC:-not found}"
-        echo "Found arch.h:       ${ARCH_H_SRC:-not found}"
-        echo "Found feature.h:    ${FEATURE_H_SRC:-not found}"
-        echo "Found uapi/sulog.h: ${SULOG_UAPI_SRC:-not found}"
+        APP_PROFILE_SRC="$(
+          find_first_header \
+            "app_profile.h" \
+            "$KSU_SOURCE_DIR/include/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/policy/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/include/app_profile.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+        )"
+
+        POLICY_FEATURE_SRC="$(
+          find_first_header \
+            "feature.h" \
+            "$KSU_SOURCE_DIR/policy/uapi/feature.h" \
+            "$KSU_SOURCE_DIR/include/uapi/feature.h" \
+            "$KSU_SOURCE_DIR/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/uapi/feature.h"
+        )"
+
+        echo "Found klog.h:             ${KLOG_SRC:-not found}"
+        echo "Found ksu.h:              ${KSU_H_SRC:-not found}"
+        echo "Found arch.h:             ${ARCH_H_SRC:-not found}"
+        echo "Found feature.h:          ${FEATURE_H_SRC:-not found}"
+        echo "Found uapi/sulog.h:       ${SULOG_UAPI_SRC:-not found}"
+        echo "Found app_profile.h:      ${APP_PROFILE_SRC:-not found}"
+        echo "Found policy feature.h:   ${POLICY_FEATURE_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
           safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
@@ -1661,7 +1718,6 @@ runs:
           safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
         else
           echo "::warning::Could not find real SukiSU feature.h"
-          echo "::warning::Feature IDs will be provided by fallback patches"
         fi
 
         if [ -n "$SULOG_UAPI_SRC" ]; then
@@ -1672,52 +1728,115 @@ runs:
           echo "::warning::Could not find uapi/sulog.h in SukiSU source tree"
         fi
 
-        echo "Creating safe compatibility policy/uapi/app_profile.h"
+        echo "Installing real app_profile.h layout"
+
+        if [ -n "$APP_PROFILE_SRC" ] && grep -qE 'struct[[:space:]]+app_profile|struct[[:space:]]+root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME' "$APP_PROFILE_SRC"; then
+          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/uapi/app_profile.h"
+          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/include/uapi/app_profile.h"
+          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
+        else
+          echo "::warning::Real app_profile.h with profile structs not found. Creating fallback policy_compat.h."
+        fi
+
+        echo "Installing policy/uapi/feature.h"
+
+        if [ -n "$POLICY_FEATURE_SRC" ] && [ -f "$POLICY_FEATURE_SRC" ]; then
+          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/feature.h"
+          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/uapi/feature.h"
+          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/include/uapi/feature.h"
+        else
+          {
+            printf '%s\n' '#ifndef __KSU_POLICY_UAPI_FEATURE_H'
+            printf '%s\n' '#define __KSU_POLICY_UAPI_FEATURE_H'
+            printf '%s\n' ''
+            printf '%s\n' '/* SukiSU compatibility shim. */'
+            printf '%s\n' ''
+            printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
+          } > "$POLICY_UAPI_DIR/feature.h"
+          echo "Created fallback: $POLICY_UAPI_DIR/feature.h"
+        fi
+
+        echo "Creating SukiSU policy compatibility header"
+
+        KSU_POLICY_COMPAT_H="$KSU_BUILTIN_DIR/policy_compat.h"
 
         {
-          printf '%s\n' '#ifndef __KSU_POLICY_UAPI_APP_PROFILE_H'
-          printf '%s\n' '#define __KSU_POLICY_UAPI_APP_PROFILE_H'
+          printf '%s\n' '#ifndef __KSU_POLICY_COMPAT_H'
+          printf '%s\n' '#define __KSU_POLICY_COMPAT_H'
           printf '%s\n' ''
-          printf '%s\n' '/*'
-          printf '%s\n' ' * SukiSU compatibility shim.'
-          printf '%s\n' ' *'
-          printf '%s\n' ' * Some SukiSU installer layouts expect this policy uapi header,'
-          printf '%s\n' ' * but certain integrated kernel trees do not ship a standalone copy.'
-          printf '%s\n' ' * This shim intentionally avoids recursive includes.'
-          printf '%s\n' ' */'
+          printf '%s\n' '#include <linux/types.h>'
+          printf '%s\n' '#include <linux/capability.h>'
           printf '%s\n' ''
-          printf '%s\n' '#endif /* __KSU_POLICY_UAPI_APP_PROFILE_H */'
-        } > "$POLICY_UAPI_DIR/app_profile.h"
-
-        echo "Created: $POLICY_UAPI_DIR/app_profile.h"
-
-        echo "Creating safe compatibility policy/uapi/feature.h"
-
-        {
-          printf '%s\n' '#ifndef __KSU_POLICY_UAPI_FEATURE_H'
-          printf '%s\n' '#define __KSU_POLICY_UAPI_FEATURE_H'
+          printf '%s\n' '#ifndef KSU_MAX_PACKAGE_NAME'
+          printf '%s\n' '#define KSU_MAX_PACKAGE_NAME 256'
+          printf '%s\n' '#endif'
           printf '%s\n' ''
-          printf '%s\n' '/*'
-          printf '%s\n' ' * SukiSU compatibility shim.'
-          printf '%s\n' ' *'
-          printf '%s\n' ' * Some integrated source layouts are missing this policy uapi header.'
-          printf '%s\n' ' * This shim satisfies include resolution without recursive paths.'
-          printf '%s\n' ' */'
+          printf '%s\n' '#ifndef KSU_MAX_GROUPS'
+          printf '%s\n' '#define KSU_MAX_GROUPS 32'
+          printf '%s\n' '#endif'
           printf '%s\n' ''
-          printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
-        } > "$POLICY_UAPI_DIR/feature.h"
+          printf '%s\n' '#ifndef KSU_APP_PROFILE_VER'
+          printf '%s\n' '#define KSU_APP_PROFILE_VER 2'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' '#ifndef KSU_DEFAULT_SELINUX_DOMAIN'
+          printf '%s\n' '#define KSU_DEFAULT_SELINUX_DOMAIN "u:r:su:s0"'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' '#ifndef KSU_NS_INHERITED'
+          printf '%s\n' '#define KSU_NS_INHERITED 0'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' 'struct ksu_capabilities_compat {'
+          printf '%s\n' '    kernel_cap_t effective;'
+          printf '%s\n' '    kernel_cap_t permitted;'
+          printf '%s\n' '    kernel_cap_t inheritable;'
+          printf '%s\n' '};'
+          printf '%s\n' ''
+          printf '%s\n' '#ifndef __KSU_APP_PROFILE_STRUCT_FALLBACK'
+          printf '%s\n' '#define __KSU_APP_PROFILE_STRUCT_FALLBACK'
+          printf '%s\n' ''
+          printf '%s\n' 'struct root_profile {'
+          printf '%s\n' '    uid_t uid;'
+          printf '%s\n' '    gid_t gid;'
+          printf '%s\n' '    u32 groups_count;'
+          printf '%s\n' '    gid_t groups[KSU_MAX_GROUPS];'
+          printf '%s\n' '    struct ksu_capabilities_compat capabilities;'
+          printf '%s\n' '    u32 namespaces;'
+          printf '%s\n' '    char selinux_domain[64];'
+          printf '%s\n' '    u32 flags;'
+          printf '%s\n' '};'
+          printf '%s\n' ''
+          printf '%s\n' 'struct non_root_profile {'
+          printf '%s\n' '    bool umount_modules;'
+          printf '%s\n' '};'
+          printf '%s\n' ''
+          printf '%s\n' 'struct app_profile {'
+          printf '%s\n' '    u32 version;'
+          printf '%s\n' '    char key[KSU_MAX_PACKAGE_NAME];'
+          printf '%s\n' '    uid_t current_uid;'
+          printf '%s\n' '    bool allow_su;'
+          printf '%s\n' '    struct root_profile root_profile;'
+          printf '%s\n' '    struct non_root_profile non_root_profile;'
+          printf '%s\n' '};'
+          printf '%s\n' ''
+          printf '%s\n' '#endif /* __KSU_APP_PROFILE_STRUCT_FALLBACK */'
+          printf '%s\n' ''
+          printf '%s\n' '#endif /* __KSU_POLICY_COMPAT_H */'
+        } > "$KSU_POLICY_COMPAT_H"
 
-        echo "Created: $POLICY_UAPI_DIR/feature.h"
+        echo "Created: $KSU_POLICY_COMPAT_H"
 
         echo "Checking for accidental recursive include directives"
 
-        if grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/app_profile\.h[">]' "$POLICY_UAPI_DIR/app_profile.h"; then
+        if [ -f "$POLICY_UAPI_DIR/app_profile.h" ] && grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/app_profile\.h[">]' "$POLICY_UAPI_DIR/app_profile.h"; then
           echo "::error::Recursive include still present in $POLICY_UAPI_DIR/app_profile.h"
           sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
           exit 1
         fi
 
-        if grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/feature\.h[">]' "$POLICY_UAPI_DIR/feature.h"; then
+        if [ -f "$POLICY_UAPI_DIR/feature.h" ] && grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+["<]uapi/feature\.h[">]' "$POLICY_UAPI_DIR/feature.h"; then
           echo "::error::Recursive include still present in $POLICY_UAPI_DIR/feature.h"
           sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
           exit 1
@@ -1738,6 +1857,8 @@ runs:
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/manager'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/manager/uapi'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi'
             } >> "$KSU_MAKEFILE"
@@ -1755,6 +1876,8 @@ runs:
               'drivers/kernelsu/feature' \
               'drivers/kernelsu/sulog' \
               'drivers/kernelsu/sulog/uapi' \
+              'drivers/kernelsu/manager' \
+              'drivers/kernelsu/manager/uapi' \
               'drivers/kernelsu/policy' \
               'drivers/kernelsu/policy/uapi'; do
 
@@ -1775,14 +1898,6 @@ runs:
         {
           printf '%s\n' '#ifndef __KSU_FEATURE_ID_COMPAT_H'
           printf '%s\n' '#define __KSU_FEATURE_ID_COMPAT_H'
-          printf '%s\n' ''
-          printf '%s\n' '/*'
-          printf '%s\n' ' * SukiSU compatibility shim for integrated kernel builds.'
-          printf '%s\n' ' *'
-          printf '%s\n' ' * Some SukiSU revisions use optional feature IDs from newer'
-          printf '%s\n' ' * internal headers, while some builtin installer layouts do not'
-          printf '%s\n' ' * expose those IDs to drivers/kernelsu/feature/*.c.'
-          printf '%s\n' ' */'
           printf '%s\n' ''
           printf '%s\n' '#ifndef KSU_FEATURE_KERNEL_UMOUNT'
           printf '%s\n' '#define KSU_FEATURE_KERNEL_UMOUNT 1001'
@@ -1840,6 +1955,28 @@ runs:
           "SukiSU direct feature-id fallback: sucompat" \
           "KSU_FEATURE_SU_COMPAT" \
           "1003"
+
+        echo "Patching direct policy compatibility includes"
+
+        inject_include_once \
+          "$KSU_BUILTIN_DIR/manager/apk_sign.c" \
+          "SukiSU direct policy compat include: apk_sign" \
+          '#include "../policy_compat.h"'
+
+        inject_include_once \
+          "$KSU_BUILTIN_DIR/manager/throne_tracker.c" \
+          "SukiSU direct policy compat include: throne_tracker" \
+          '#include "../policy_compat.h"'
+
+        inject_include_once \
+          "$KSU_BUILTIN_DIR/policy/allowlist.c" \
+          "SukiSU direct policy compat include: allowlist" \
+          '#include "../policy_compat.h"'
+
+        inject_include_once \
+          "$KSU_BUILTIN_DIR/policy/app_profile.c" \
+          "SukiSU direct policy compat include: app_profile" \
+          '#include "../policy_compat.h"'
 
         echo "Checking SukiSU sucompat static-key compatibility"
 
@@ -1929,6 +2066,10 @@ runs:
         REQUIRED_HEADERS=(
           "$POLICY_UAPI_DIR/app_profile.h"
           "$POLICY_UAPI_DIR/feature.h"
+          "$KSU_BUILTIN_DIR/uapi/app_profile.h"
+          "$KSU_BUILTIN_DIR/include/uapi/app_profile.h"
+          "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
+          "$KSU_BUILTIN_DIR/policy_compat.h"
           "$KSU_BUILTIN_DIR/feature/klog.h"
           "$KSU_BUILTIN_DIR/ksu.h"
           "$KSU_BUILTIN_DIR/include/ksu.h"
@@ -1957,6 +2098,13 @@ runs:
           fi
         done
 
+        echo "Checking app profile definitions:"
+        grep -R --line-number \
+          -E 'struct app_profile|struct root_profile|struct non_root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS' \
+          "$KSU_BUILTIN_DIR" \
+          "$KSU_SOURCE_DIR" \
+          2>/dev/null | head -n 120 || true
+
         echo "Checking SukiSU feature ID definitions:"
         grep -R --line-number \
           -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT' \
@@ -1964,9 +2112,38 @@ runs:
           "$KSU_SOURCE_DIR" \
           2>/dev/null || true
 
+        echo "Dumping app_profile.h previews:"
+        for f in \
+          "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,120p' "$f" || true
+          fi
+        done
+
+        echo "Dumping policy_compat.h:"
+        if [ -f "$KSU_POLICY_COMPAT_H" ]; then
+          sed -n '1,180p' "$KSU_POLICY_COMPAT_H" || true
+        fi
+
+        echo "Dumping direct policy include state:"
+        for f in \
+          "$KSU_BUILTIN_DIR/manager/apk_sign.c" \
+          "$KSU_BUILTIN_DIR/manager/throne_tracker.c" \
+          "$KSU_BUILTIN_DIR/policy/allowlist.c" \
+          "$KSU_BUILTIN_DIR/policy/app_profile.c"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,35p' "$f" || true
+          fi
+        done
+
         echo "Dumping feature_id_compat.h:"
-        if [ -f "$KSU_BUILTIN_DIR/feature_id_compat.h" ]; then
-          sed -n '1,140p' "$KSU_BUILTIN_DIR/feature_id_compat.h" || true
+        if [ -f "$KSU_FEATURE_COMPAT_H" ]; then
+          sed -n '1,140p' "$KSU_FEATURE_COMPAT_H" || true
         fi
 
         echo "Dumping direct feature ID fallback state:"
@@ -1981,12 +2158,6 @@ runs:
             grep -nE 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT|direct feature-id fallback' "$f" || true
           fi
         done
-
-        echo "Dumping app_profile.h preview:"
-        sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
-
-        echo "Dumping policy/uapi/feature.h preview:"
-        sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
 
         echo "Dumping real feature.h candidates:"
         for f in \
