@@ -1567,6 +1567,65 @@ runs:
           echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
         fi
 
+        echo "Checking SukiSU sucompat static-key compatibility"
+
+        SUCOMPAT_C="$KSU_BUILTIN_DIR/feature/sucompat.c"
+        SUCOMPAT_H="$KSU_BUILTIN_DIR/feature/sucompat.h"
+
+        if grep -Rqs 'extern struct static_key_true ksu_su_compat_enabled' \
+          "$COMMON_KERNEL_FOLDER/fs/exec.c" \
+          "$COMMON_KERNEL_FOLDER/fs/open.c" \
+          "$COMMON_KERNEL_FOLDER/fs/stat.c"; then
+
+          echo "Kernel call sites expect ksu_su_compat_enabled as static_key_true"
+
+          if [ -f "$SUCOMPAT_C" ]; then
+            if grep -qE '^[[:space:]]*bool[[:space:]]+ksu_su_compat_enabled[[:space:]]' "$SUCOMPAT_C"; then
+              sed -i \
+                -e 's/^[[:space:]]*bool[[:space:]]\+ksu_su_compat_enabled[[:space:]]\+__read_mostly[[:space:]]*=.*;/DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);/' \
+                -e 's/ksu_su_compat_enabled[[:space:]]*?[[:space:]]*1[[:space:]]*:[[:space:]]*0/static_branch_likely(\&ksu_su_compat_enabled) ? 1 : 0/g' \
+                "$SUCOMPAT_C"
+
+              echo "Patched sucompat.c bool ksu_su_compat_enabled to DEFINE_STATIC_KEY_TRUE"
+            else
+              echo "sucompat.c does not contain bool ksu_su_compat_enabled declaration, skipping declaration patch"
+            fi
+
+            if ! grep -q '#include <linux/jump_label.h>' "$SUCOMPAT_C"; then
+              sed -i '1i #include <linux/jump_label.h>' "$SUCOMPAT_C"
+              echo "Added linux/jump_label.h to sucompat.c"
+            fi
+
+            if grep -q 'ksu_su_compat_enabled = enable;' "$SUCOMPAT_C"; then
+              sed -i \
+                -e 's/ksu_su_compat_enabled = enable;/if (enable) static_branch_enable(\&ksu_su_compat_enabled); else static_branch_disable(\&ksu_su_compat_enabled);/g' \
+                "$SUCOMPAT_C"
+
+              echo "Patched sucompat setter to use static_branch_enable/disable"
+            fi
+          else
+            echo "::warning::sucompat.c not found: $SUCOMPAT_C"
+          fi
+
+          if [ -f "$SUCOMPAT_H" ]; then
+            if grep -qE 'extern[[:space:]]+bool[[:space:]]+ksu_su_compat_enabled' "$SUCOMPAT_H"; then
+              sed -i 's/extern[[:space:]]\+bool[[:space:]]\+ksu_su_compat_enabled[[:space:]]*;/extern struct static_key_true ksu_su_compat_enabled;/' "$SUCOMPAT_H"
+              echo "Patched sucompat.h declaration to static_key_true"
+            else
+              echo "sucompat.h does not contain extern bool ksu_su_compat_enabled declaration, skipping declaration patch"
+            fi
+
+            if ! grep -q '#include <linux/jump_label.h>' "$SUCOMPAT_H"; then
+              sed -i '1i #include <linux/jump_label.h>' "$SUCOMPAT_H"
+              echo "Added linux/jump_label.h to sucompat.h"
+            fi
+          else
+            echo "::warning::sucompat.h not found: $SUCOMPAT_H"
+          fi
+        else
+          echo "Kernel call sites do not require static-key sucompat compatibility"
+        fi
+
         echo "Verifying repaired header paths..."
 
         REQUIRED_HEADERS=(
@@ -1595,6 +1654,15 @@ runs:
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
           grep -nE 'SukiSU internal include compatibility|drivers/kernelsu' "$KSU_MAKEFILE" || true
+        fi
+
+        echo "Dumping sucompat compatibility state:"
+        if [ -f "$SUCOMPAT_C" ]; then
+          grep -nE 'jump_label|DEFINE_STATIC_KEY_TRUE|ksu_su_compat_enabled|static_branch' "$SUCOMPAT_C" || true
+        fi
+
+        if [ -f "$SUCOMPAT_H" ]; then
+          grep -nE 'jump_label|ksu_su_compat_enabled|static_key_true' "$SUCOMPAT_H" || true
         fi
 
         if [ "$MISSING" -gt 0 ]; then
