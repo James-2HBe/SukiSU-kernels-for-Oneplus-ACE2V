@@ -1534,6 +1534,39 @@ runs:
             2>/dev/null | head -n1 || true
         }
 
+        inject_feature_id_fallback() {
+          local file="$1"
+          local marker="$2"
+          local macro="$3"
+          local value="$4"
+
+          if [ ! -f "$file" ]; then
+            echo "::warning::Feature source not found: $file"
+            return 0
+          fi
+
+          if grep -q "$marker" "$file"; then
+            echo "$macro fallback already present in $file"
+            return 0
+          fi
+
+          tmp_file="$(mktemp)"
+
+          {
+            printf '%s\n' "/* $marker */"
+            printf '%s\n' "#ifndef $macro"
+            printf '%s\n' "#define $macro $value"
+            printf '%s\n' '#endif'
+            printf '%s\n' ''
+            cat "$file"
+          } > "$tmp_file"
+
+          cat "$tmp_file" > "$file"
+          rm -f "$tmp_file"
+
+          echo "Injected $macro fallback into $file"
+        }
+
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
         mkdir -p "$POLICY_UAPI_DIR"
 
@@ -1759,6 +1792,10 @@ runs:
           printf '%s\n' '#define KSU_FEATURE_SULOG 1002'
           printf '%s\n' '#endif'
           printf '%s\n' ''
+          printf '%s\n' '#ifndef KSU_FEATURE_SU_COMPAT'
+          printf '%s\n' '#define KSU_FEATURE_SU_COMPAT 1003'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_FEATURE_ID_COMPAT_H */'
         } > "$KSU_FEATURE_COMPAT_H"
 
@@ -1783,59 +1820,28 @@ runs:
 
         KERNEL_UMOUNT_C="$KSU_BUILTIN_DIR/feature/kernel_umount.c"
         SULOG_C="$KSU_BUILTIN_DIR/feature/sulog.c"
-
-        if [ -f "$KERNEL_UMOUNT_C" ]; then
-          if ! grep -q 'SukiSU direct feature-id fallback: kernel_umount' "$KERNEL_UMOUNT_C"; then
-            tmp_file="$(mktemp)"
-
-            {
-              printf '%s\n' '/* SukiSU direct feature-id fallback: kernel_umount */'
-              printf '%s\n' '#ifndef KSU_FEATURE_KERNEL_UMOUNT'
-              printf '%s\n' '#define KSU_FEATURE_KERNEL_UMOUNT 1001'
-              printf '%s\n' '#endif'
-              printf '%s\n' ''
-              cat "$KERNEL_UMOUNT_C"
-            } > "$tmp_file"
-
-            cat "$tmp_file" > "$KERNEL_UMOUNT_C"
-            rm -f "$tmp_file"
-
-            echo "Injected KSU_FEATURE_KERNEL_UMOUNT fallback into $KERNEL_UMOUNT_C"
-          else
-            echo "KSU_FEATURE_KERNEL_UMOUNT fallback already present in $KERNEL_UMOUNT_C"
-          fi
-        else
-          echo "::warning::kernel_umount.c not found: $KERNEL_UMOUNT_C"
-        fi
-
-        if [ -f "$SULOG_C" ]; then
-          if ! grep -q 'SukiSU direct feature-id fallback: sulog' "$SULOG_C"; then
-            tmp_file="$(mktemp)"
-
-            {
-              printf '%s\n' '/* SukiSU direct feature-id fallback: sulog */'
-              printf '%s\n' '#ifndef KSU_FEATURE_SULOG'
-              printf '%s\n' '#define KSU_FEATURE_SULOG 1002'
-              printf '%s\n' '#endif'
-              printf '%s\n' ''
-              cat "$SULOG_C"
-            } > "$tmp_file"
-
-            cat "$tmp_file" > "$SULOG_C"
-            rm -f "$tmp_file"
-
-            echo "Injected KSU_FEATURE_SULOG fallback into $SULOG_C"
-          else
-            echo "KSU_FEATURE_SULOG fallback already present in $SULOG_C"
-          fi
-        else
-          echo "::warning::sulog.c not found: $SULOG_C"
-        fi
-
-        echo "Checking SukiSU sucompat static-key compatibility"
-
         SUCOMPAT_C="$KSU_BUILTIN_DIR/feature/sucompat.c"
         SUCOMPAT_H="$KSU_BUILTIN_DIR/feature/sucompat.h"
+
+        inject_feature_id_fallback \
+          "$KERNEL_UMOUNT_C" \
+          "SukiSU direct feature-id fallback: kernel_umount" \
+          "KSU_FEATURE_KERNEL_UMOUNT" \
+          "1001"
+
+        inject_feature_id_fallback \
+          "$SULOG_C" \
+          "SukiSU direct feature-id fallback: sulog" \
+          "KSU_FEATURE_SULOG" \
+          "1002"
+
+        inject_feature_id_fallback \
+          "$SUCOMPAT_C" \
+          "SukiSU direct feature-id fallback: sucompat" \
+          "KSU_FEATURE_SU_COMPAT" \
+          "1003"
+
+        echo "Checking SukiSU sucompat static-key compatibility"
 
         if grep -Rqs 'extern struct static_key_true ksu_su_compat_enabled' \
           "$COMMON_KERNEL_FOLDER/fs/exec.c" \
@@ -1953,25 +1959,26 @@ runs:
 
         echo "Checking SukiSU feature ID definitions:"
         grep -R --line-number \
-          -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG' \
+          -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT' \
           "$KSU_BUILTIN_DIR" \
           "$KSU_SOURCE_DIR" \
           2>/dev/null || true
 
         echo "Dumping feature_id_compat.h:"
         if [ -f "$KSU_BUILTIN_DIR/feature_id_compat.h" ]; then
-          sed -n '1,120p' "$KSU_BUILTIN_DIR/feature_id_compat.h" || true
+          sed -n '1,140p' "$KSU_BUILTIN_DIR/feature_id_compat.h" || true
         fi
 
         echo "Dumping direct feature ID fallback state:"
         for f in \
           "$KSU_BUILTIN_DIR/feature/kernel_umount.c" \
-          "$KSU_BUILTIN_DIR/feature/sulog.c"; do
+          "$KSU_BUILTIN_DIR/feature/sulog.c" \
+          "$KSU_BUILTIN_DIR/feature/sucompat.c"; do
 
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            sed -n '1,40p' "$f" || true
-            grep -nE 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|direct feature-id fallback' "$f" || true
+            sed -n '1,50p' "$f" || true
+            grep -nE 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|KSU_FEATURE_SU_COMPAT|direct feature-id fallback' "$f" || true
           fi
         done
 
@@ -1988,7 +1995,7 @@ runs:
           "$KSU_BUILTIN_DIR/feature/feature.h"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|SULOG|enum|define' "$f" || sed -n '1,80p' "$f" || true
+            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|SULOG|SU_COMPAT|enum|define' "$f" || sed -n '1,80p' "$f" || true
           fi
         done
 
@@ -2011,7 +2018,7 @@ runs:
 
         echo "Dumping sucompat compatibility state:"
         if [ -f "$SUCOMPAT_C" ]; then
-          grep -nE 'jump_label|DEFINE_STATIC_KEY_TRUE|ksu_su_compat_enabled|static_branch' "$SUCOMPAT_C" || true
+          grep -nE 'jump_label|DEFINE_STATIC_KEY_TRUE|ksu_su_compat_enabled|static_branch|KSU_FEATURE_SU_COMPAT' "$SUCOMPAT_C" || true
         fi
 
         if [ -f "$SUCOMPAT_H" ]; then
