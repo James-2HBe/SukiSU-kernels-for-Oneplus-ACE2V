@@ -1480,7 +1480,16 @@ runs:
             2>/dev/null | head -n1 || true
         )"
 
+        KSU_H_SRC="$(
+          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+            -type f \
+            -name 'ksu.h' \
+            -print \
+            2>/dev/null | head -n1 || true
+        )"
+
         echo "Found klog.h: ${KLOG_SRC:-not found}"
+        echo "Found ksu.h:  ${KSU_H_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
           mkdir -p "$KSU_BUILTIN_DIR/feature"
@@ -1492,6 +1501,26 @@ runs:
           echo "  $KSU_BUILTIN_DIR/klog.h"
         else
           echo "::warning::Could not find klog.h in SukiSU source tree"
+        fi
+
+        if [ -n "$KSU_H_SRC" ]; then
+          mkdir -p "$KSU_BUILTIN_DIR/include"
+          mkdir -p "$KSU_BUILTIN_DIR/core"
+          mkdir -p "$KSU_BUILTIN_DIR/feature"
+
+          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/ksu.h"
+          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/include/ksu.h"
+          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/core/ksu.h"
+          cp -f "$KSU_H_SRC" "$KSU_BUILTIN_DIR/feature/ksu.h"
+
+          echo "Installed ksu.h to:"
+          echo "  $KSU_BUILTIN_DIR/ksu.h"
+          echo "  $KSU_BUILTIN_DIR/include/ksu.h"
+          echo "  $KSU_BUILTIN_DIR/core/ksu.h"
+          echo "  $KSU_BUILTIN_DIR/feature/ksu.h"
+        else
+          echo "::warning::Could not find ksu.h in SukiSU source tree"
+          echo "::warning::Build may still fail if this SukiSU revision requires ksu.h"
         fi
 
         echo "Creating safe compatibility policy/uapi/app_profile.h"
@@ -1554,14 +1583,25 @@ runs:
               printf '%s\n' '# SukiSU internal include compatibility'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/core'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi'
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
             } >> "$KSU_MAKEFILE"
 
             echo "Added SukiSU include compatibility flags to $KSU_MAKEFILE"
           else
             echo "SukiSU include compatibility flags already present"
+
+            if ! grep -q 'drivers/kernelsu/core' "$KSU_MAKEFILE"; then
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/core' >> "$KSU_MAKEFILE"
+              echo "Added missing core include path"
+            fi
+
+            if ! grep -q 'drivers/kernelsu/feature' "$KSU_MAKEFILE"; then
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature' >> "$KSU_MAKEFILE"
+              echo "Added missing feature include path"
+            fi
           fi
         else
           echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
@@ -1632,6 +1672,10 @@ runs:
           "$POLICY_UAPI_DIR/app_profile.h"
           "$POLICY_UAPI_DIR/feature.h"
           "$KSU_BUILTIN_DIR/feature/klog.h"
+          "$KSU_BUILTIN_DIR/ksu.h"
+          "$KSU_BUILTIN_DIR/include/ksu.h"
+          "$KSU_BUILTIN_DIR/core/ksu.h"
+          "$KSU_BUILTIN_DIR/feature/ksu.h"
         )
 
         MISSING=0
@@ -1650,6 +1694,9 @@ runs:
 
         echo "Dumping feature.h preview:"
         sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
+
+        echo "Dumping ksu.h locations:"
+        find "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
