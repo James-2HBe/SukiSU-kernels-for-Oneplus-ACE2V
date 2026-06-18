@@ -1534,6 +1534,87 @@ runs:
             2>/dev/null | head -n1 || true
         }
 
+        is_real_app_profile_header() {
+          local file="$1"
+
+          [ -f "$file" ] || return 1
+
+          grep -qE 'struct[[:space:]]+app_profile|struct[[:space:]]+root_profile|struct[[:space:]]+non_root_profile' "$file" || return 1
+          grep -qE 'KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS|KSU_DEFAULT_SELINUX_DOMAIN|KSU_NS_INHERITED' "$file" || return 1
+
+          return 0
+        }
+
+        is_policy_feature_header() {
+          local file="$1"
+
+          [ -f "$file" ] || return 1
+
+          grep -qE 'enum[[:space:]]+ksu_feature_id|KSU_FEATURE_SU_COMPAT|KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG' "$file" || return 1
+
+          return 0
+        }
+
+        is_internal_feature_header() {
+          local file="$1"
+
+          [ -f "$file" ] || return 1
+
+          # Do not treat policy/uapi enum feature.h as the internal feature header.
+          if is_policy_feature_header "$file"; then
+            return 1
+          fi
+
+          # Avoid old generated compatibility shim.
+          if grep -qE 'SukiSU feature-id compatibility|Intentionally empty|Older workflow revisions used macro fallbacks' "$file"; then
+            return 1
+          fi
+
+          # Internal feature headers usually contain declarations/macros/includes related to SukiSU features,
+          # but should not be enum-only policy/uapi headers.
+          grep -qE 'ksu_|KSU_|feature|#include' "$file" || return 1
+
+          return 0
+        }
+
+        find_valid_header() {
+          local validator="$1"
+          shift
+
+          local candidate
+
+          for candidate in "$@"; do
+            if [ -f "$candidate" ] && "$validator" "$candidate"; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+          done
+
+          return 1
+        }
+
+        find_valid_header_by_name() {
+          local name="$1"
+          local validator="$2"
+
+          local candidate
+
+          while IFS= read -r candidate; do
+            if [ -f "$candidate" ] && "$validator" "$candidate"; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+          done < <(
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name "$name" \
+              -print \
+              2>/dev/null
+          )
+
+          return 1
+        }
+
         inject_include_once() {
           local file="$1"
           local marker="$2"
@@ -1622,13 +1703,19 @@ runs:
         )"
 
         FEATURE_H_SRC="$(
-          find_first_header \
-            "feature.h" \
+          find_valid_header is_internal_feature_header \
             "$KSU_SOURCE_DIR/include/feature.h" \
+            "$KSU_SOURCE_DIR/feature/feature.h" \
             "$KSU_SOURCE_DIR/feature.h" \
             "$KSU_BUILTIN_DIR/include/feature.h" \
-            "$KSU_BUILTIN_DIR/feature.h"
+            "$KSU_BUILTIN_DIR/feature/feature.h" \
+            "$KSU_BUILTIN_DIR/feature.h" \
+          || true
         )"
+
+        if [ -z "$FEATURE_H_SRC" ]; then
+          FEATURE_H_SRC="$(find_valid_header_by_name "feature.h" is_internal_feature_header || true)"
+        fi
 
         SULOG_UAPI_SRC="$(
           find_first_header \
@@ -1640,35 +1727,43 @@ runs:
         )"
 
         APP_PROFILE_SRC="$(
-          find_first_header \
-            "app_profile.h" \
+          find_valid_header is_real_app_profile_header \
             "$KSU_SOURCE_DIR/include/uapi/app_profile.h" \
             "$KSU_SOURCE_DIR/uapi/app_profile.h" \
             "$KSU_SOURCE_DIR/policy/uapi/app_profile.h" \
             "$KSU_SOURCE_DIR/include/app_profile.h" \
             "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
             "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
-            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
+          || true
         )"
 
+        if [ -z "$APP_PROFILE_SRC" ]; then
+          APP_PROFILE_SRC="$(find_valid_header_by_name "app_profile.h" is_real_app_profile_header || true)"
+        fi
+
         POLICY_FEATURE_SRC="$(
-          find_first_header \
-            "feature.h" \
+          find_valid_header is_policy_feature_header \
             "$KSU_SOURCE_DIR/policy/uapi/feature.h" \
             "$KSU_SOURCE_DIR/include/uapi/feature.h" \
             "$KSU_SOURCE_DIR/uapi/feature.h" \
             "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
             "$KSU_BUILTIN_DIR/include/uapi/feature.h" \
-            "$KSU_BUILTIN_DIR/uapi/feature.h"
+            "$KSU_BUILTIN_DIR/uapi/feature.h" \
+          || true
         )"
 
-        echo "Found klog.h:             ${KLOG_SRC:-not found}"
-        echo "Found ksu.h:              ${KSU_H_SRC:-not found}"
-        echo "Found arch.h:             ${ARCH_H_SRC:-not found}"
-        echo "Found feature.h:          ${FEATURE_H_SRC:-not found}"
-        echo "Found uapi/sulog.h:       ${SULOG_UAPI_SRC:-not found}"
-        echo "Found app_profile.h:      ${APP_PROFILE_SRC:-not found}"
-        echo "Found policy feature.h:   ${POLICY_FEATURE_SRC:-not found}"
+        if [ -z "$POLICY_FEATURE_SRC" ]; then
+          POLICY_FEATURE_SRC="$(find_valid_header_by_name "feature.h" is_policy_feature_header || true)"
+        fi
+
+        echo "Found klog.h:                ${KLOG_SRC:-not found}"
+        echo "Found ksu.h:                 ${KSU_H_SRC:-not found}"
+        echo "Found arch.h:                ${ARCH_H_SRC:-not found}"
+        echo "Found internal feature.h:    ${FEATURE_H_SRC:-not found}"
+        echo "Found uapi/sulog.h:          ${SULOG_UAPI_SRC:-not found}"
+        echo "Found real app_profile.h:    ${APP_PROFILE_SRC:-not found}"
+        echo "Found policy/uapi feature.h: ${POLICY_FEATURE_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
           safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
@@ -1700,7 +1795,7 @@ runs:
           safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/include/feature.h"
           safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
         else
-          echo "::warning::Could not find real SukiSU feature.h"
+          echo "::warning::Could not find validated internal SukiSU feature.h"
         fi
 
         if [ -n "$SULOG_UAPI_SRC" ]; then
@@ -1713,18 +1808,42 @@ runs:
 
         echo "Installing real app_profile.h layout"
 
-        if [ -n "$APP_PROFILE_SRC" ] && grep -qE 'struct[[:space:]]+app_profile|struct[[:space:]]+root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME' "$APP_PROFILE_SRC"; then
+        if [ -n "$APP_PROFILE_SRC" ] && is_real_app_profile_header "$APP_PROFILE_SRC"; then
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/uapi/app_profile.h"
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/include/uapi/app_profile.h"
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
           safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
         else
-          echo "::warning::Real app_profile.h with profile structs not found. policy_compat.h fallback will be used."
+          echo "::error::Real app_profile.h with required profile structs was not found."
+          echo "SukiSU manager/policy sources require real app profile definitions."
+          echo "Refusing to create an incomplete app_profile.h shim because it causes later compile failures."
+          echo ""
+          echo "Available app_profile.h candidates:"
+          find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+            -type f \
+            -name 'app_profile.h' \
+            -print \
+            2>/dev/null || true
+          echo ""
+          echo "Candidate previews:"
+          while IFS= read -r candidate; do
+            [ -f "$candidate" ] || continue
+            echo "=== $candidate ==="
+            grep -nE 'struct[[:space:]]+app_profile|struct[[:space:]]+root_profile|struct[[:space:]]+non_root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS' "$candidate" || true
+            sed -n '1,80p' "$candidate" || true
+          done < <(
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name 'app_profile.h' \
+              -print \
+              2>/dev/null
+          )
+          exit 1
         fi
 
         echo "Installing policy/uapi/feature.h"
 
-        if [ -n "$POLICY_FEATURE_SRC" ] && [ -f "$POLICY_FEATURE_SRC" ]; then
+        if [ -n "$POLICY_FEATURE_SRC" ] && is_policy_feature_header "$POLICY_FEATURE_SRC"; then
           safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/feature.h"
           safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/uapi/feature.h"
           safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/include/uapi/feature.h"
@@ -2010,14 +2129,19 @@ runs:
           "$KSU_BUILTIN_DIR/arch.h"
           "$KSU_BUILTIN_DIR/include/arch.h"
           "$KSU_BUILTIN_DIR/feature/arch.h"
-          "$KSU_BUILTIN_DIR/feature.h"
-          "$KSU_BUILTIN_DIR/include/feature.h"
-          "$KSU_BUILTIN_DIR/feature/feature.h"
           "$KSU_BUILTIN_DIR/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/feature_id_compat.h"
         )
+
+        if [ -n "$FEATURE_H_SRC" ]; then
+          REQUIRED_HEADERS+=(
+            "$KSU_BUILTIN_DIR/feature.h"
+            "$KSU_BUILTIN_DIR/include/feature.h"
+            "$KSU_BUILTIN_DIR/feature/feature.h"
+          )
+        fi
 
         MISSING=0
 
@@ -2029,6 +2153,51 @@ runs:
             MISSING=$((MISSING + 1))
           fi
         done
+
+        echo "Validating copied app_profile.h files are real headers"
+
+        for f in \
+          "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
+          "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"; do
+
+          if ! is_real_app_profile_header "$f"; then
+            echo "::error::Copied app_profile.h is not a real profile header: $f"
+            sed -n '1,120p' "$f" || true
+            exit 1
+          fi
+        done
+
+        echo "Validating copied policy feature.h files are policy/uapi enum headers"
+
+        for f in \
+          "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/feature.h"; do
+
+          if ! is_policy_feature_header "$f"; then
+            echo "::error::Copied policy feature.h is not a valid policy feature header: $f"
+            sed -n '1,100p' "$f" || true
+            exit 1
+          fi
+        done
+
+        if [ -n "$FEATURE_H_SRC" ]; then
+          echo "Validating copied internal feature.h files are not policy/uapi enum headers"
+
+          for f in \
+            "$KSU_BUILTIN_DIR/feature.h" \
+            "$KSU_BUILTIN_DIR/include/feature.h" \
+            "$KSU_BUILTIN_DIR/feature/feature.h"; do
+
+            if ! is_internal_feature_header "$f"; then
+              echo "::error::Copied internal feature.h failed validation: $f"
+              sed -n '1,100p' "$f" || true
+              exit 1
+            fi
+          done
+        fi
 
         echo "Checking for forbidden feature macro fallbacks:"
         for f in \
@@ -2073,10 +2242,13 @@ runs:
         for f in \
           "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
           "$KSU_BUILTIN_DIR/uapi/feature.h" \
-          "$KSU_BUILTIN_DIR/include/uapi/feature.h"; do
+          "$KSU_BUILTIN_DIR/include/uapi/feature.h" \
+          "$KSU_BUILTIN_DIR/feature.h" \
+          "$KSU_BUILTIN_DIR/include/feature.h" \
+          "$KSU_BUILTIN_DIR/feature/feature.h"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            sed -n '1,80p' "$f" || true
+            sed -n '1,100p' "$f" || true
           fi
         done
 
