@@ -1628,7 +1628,7 @@ runs:
           safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
         else
           echo "::warning::Could not find real SukiSU feature.h"
-          echo "::warning::KSU_FEATURE_KERNEL_UMOUNT may remain undefined"
+          echo "::warning::Feature IDs will be provided by feature_id_compat.h"
         fi
 
         if [ -n "$SULOG_UAPI_SRC" ]; then
@@ -1733,6 +1733,49 @@ runs:
           fi
         else
           echo "::warning::SukiSU Makefile not found: $KSU_MAKEFILE"
+        fi
+
+        echo "Creating SukiSU feature-id compatibility header"
+
+        KSU_FEATURE_COMPAT_H="$KSU_BUILTIN_DIR/feature_id_compat.h"
+
+        {
+          printf '%s\n' '#ifndef __KSU_FEATURE_ID_COMPAT_H'
+          printf '%s\n' '#define __KSU_FEATURE_ID_COMPAT_H'
+          printf '%s\n' ''
+          printf '%s\n' '/*'
+          printf '%s\n' ' * SukiSU compatibility shim for integrated kernel builds.'
+          printf '%s\n' ' *'
+          printf '%s\n' ' * Some SukiSU revisions use optional feature IDs from newer'
+          printf '%s\n' ' * internal headers, while some builtin installer layouts do not'
+          printf '%s\n' ' * expose those IDs to drivers/kernelsu/feature/*.c.'
+          printf '%s\n' ' */'
+          printf '%s\n' ''
+          printf '%s\n' '#ifndef KSU_FEATURE_KERNEL_UMOUNT'
+          printf '%s\n' '#define KSU_FEATURE_KERNEL_UMOUNT 1001'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' '#ifndef KSU_FEATURE_SULOG'
+          printf '%s\n' '#define KSU_FEATURE_SULOG 1002'
+          printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' '#endif /* __KSU_FEATURE_ID_COMPAT_H */'
+        } > "$KSU_FEATURE_COMPAT_H"
+
+        echo "Created: $KSU_FEATURE_COMPAT_H"
+
+        if [ -f "$KSU_MAKEFILE" ]; then
+          if ! grep -q 'feature_id_compat.h' "$KSU_MAKEFILE"; then
+            {
+              printf '%s\n' ''
+              printf '%s\n' '# SukiSU feature-id compatibility'
+              printf '%s\n' 'ccflags-y += -include $(srctree)/drivers/kernelsu/feature_id_compat.h'
+            } >> "$KSU_MAKEFILE"
+
+            echo "Added forced feature_id_compat.h include to $KSU_MAKEFILE"
+          else
+            echo "feature_id_compat.h forced include already present"
+          fi
         fi
 
         echo "Checking SukiSU sucompat static-key compatibility"
@@ -1840,6 +1883,7 @@ runs:
           "$KSU_BUILTIN_DIR/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
+          "$KSU_BUILTIN_DIR/feature_id_compat.h"
         )
 
         MISSING=0
@@ -1853,11 +1897,17 @@ runs:
           fi
         done
 
-        echo "Checking KSU_FEATURE_KERNEL_UMOUNT definition:"
-        grep -R --line-number 'KSU_FEATURE_KERNEL_UMOUNT' \
+        echo "Checking SukiSU feature ID definitions:"
+        grep -R --line-number \
+          -E 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG' \
           "$KSU_BUILTIN_DIR" \
           "$KSU_SOURCE_DIR" \
           2>/dev/null || true
+
+        echo "Dumping feature_id_compat.h:"
+        if [ -f "$KSU_BUILTIN_DIR/feature_id_compat.h" ]; then
+          sed -n '1,120p' "$KSU_BUILTIN_DIR/feature_id_compat.h" || true
+        fi
 
         echo "Dumping app_profile.h preview:"
         sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
@@ -1872,7 +1922,7 @@ runs:
           "$KSU_BUILTIN_DIR/feature/feature.h"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|enum|define' "$f" || sed -n '1,80p' "$f" || true
+            grep -nE 'KSU_FEATURE|KERNEL_UMOUNT|SULOG|enum|define' "$f" || sed -n '1,80p' "$f" || true
           fi
         done
 
@@ -1890,7 +1940,7 @@ runs:
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
-          grep -nE 'SukiSU internal include compatibility|drivers/kernelsu' "$KSU_MAKEFILE" || true
+          grep -nE 'SukiSU internal include compatibility|SukiSU feature-id compatibility|drivers/kernelsu|feature_id_compat' "$KSU_MAKEFILE" || true
         fi
 
         echo "Dumping sucompat compatibility state:"
