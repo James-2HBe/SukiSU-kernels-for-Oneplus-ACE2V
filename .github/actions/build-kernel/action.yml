@@ -1472,7 +1472,7 @@ runs:
         APP_PROFILE_SRC="$(
           find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
             -type f \
-            -path '*/uapi/app_profile.h' \
+            \( -path '*/uapi/app_profile.h' -o -name 'app_profile.h' \) \
             -print \
             2>/dev/null | head -n1 || true
         )"
@@ -1488,15 +1488,34 @@ runs:
         echo "Found app_profile.h: ${APP_PROFILE_SRC:-not found}"
         echo "Found klog.h:        ${KLOG_SRC:-not found}"
 
+        mkdir -p "$KSU_BUILTIN_DIR/policy/uapi"
+
         if [ -n "$APP_PROFILE_SRC" ]; then
-          mkdir -p "$KSU_BUILTIN_DIR/policy/uapi"
           cp -f "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
           echo "Installed app_profile.h to $KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
         else
           echo "::warning::Could not find app_profile.h in SukiSU source tree"
+          echo "Creating minimal compatibility app_profile.h stub"
+
+          {
+            printf '%s\n' '#ifndef __KSU_APP_PROFILE_H'
+            printf '%s\n' '#define __KSU_APP_PROFILE_H'
+            printf '%s\n' ''
+            printf '%s\n' '/*'
+            printf '%s\n' ' * Compatibility stub for SukiSU source layouts where app_profile.h is not'
+            printf '%s\n' ' * shipped in the integrated kernel tree.'
+            printf '%s\n' ' *'
+            printf '%s\n' ' * This header is intentionally minimal. It only satisfies include resolution.'
+            printf '%s\n' ' */'
+            printf '%s\n' ''
+            printf '%s\n' '#endif /* __KSU_APP_PROFILE_H */'
+          } > "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
+
+          echo "Created stub: $KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
         fi
 
         if [ -n "$KLOG_SRC" ]; then
+          mkdir -p "$KSU_BUILTIN_DIR/feature"
           cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
           cp -f "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
           echo "Installed klog.h to:"
@@ -1510,15 +1529,16 @@ runs:
 
         if [ -f "$KSU_MAKEFILE" ]; then
           if ! grep -q 'SukiSU internal include compatibility' "$KSU_MAKEFILE"; then
-            cat >> "$KSU_MAKEFILE" <<'EOF'
+            {
+              printf '%s\n' ''
+              printf '%s\n' '# SukiSU internal include compatibility'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/include'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
+            } >> "$KSU_MAKEFILE"
 
-            # SukiSU internal include compatibility
-             ccflags-y += -I$(srctree)/drivers/kernelsu
-             ccflags-y += -I$(srctree)/drivers/kernelsu/include
-             ccflags-y += -I$(srctree)/drivers/kernelsu/policy
-             ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi
-             ccflags-y += -I$(srctree)/drivers/kernelsu/feature
-             EOF
             echo "Added SukiSU include compatibility flags to $KSU_MAKEFILE"
           else
             echo "SukiSU include compatibility flags already present"
@@ -1544,6 +1564,16 @@ runs:
             MISSING=$((MISSING + 1))
           fi
         done
+
+        echo "Dumping repaired app_profile.h preview:"
+        if [ -f "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" ]; then
+          sed -n '1,40p' "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" || true
+        fi
+
+        echo "Dumping SukiSU Makefile include compatibility lines:"
+        if [ -f "$KSU_MAKEFILE" ]; then
+          grep -nE 'SukiSU internal include compatibility|drivers/kernelsu' "$KSU_MAKEFILE" || true
+        fi
 
         if [ "$MISSING" -gt 0 ]; then
           echo "::warning::Some SukiSU headers are still missing. Build may fail if this SukiSU revision requires them."
