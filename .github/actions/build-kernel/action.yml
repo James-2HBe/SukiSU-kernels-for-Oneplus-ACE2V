@@ -1512,13 +1512,13 @@ runs:
           if ! grep -q 'SukiSU internal include compatibility' "$KSU_MAKEFILE"; then
             cat >> "$KSU_MAKEFILE" <<'EOF'
 
-              # SukiSU internal include compatibility
-              ccflags-y += -I$(srctree)/drivers/kernelsu
-              ccflags-y += -I$(srctree)/drivers/kernelsu/include
-              ccflags-y += -I$(srctree)/drivers/kernelsu/policy
-              ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi
-              ccflags-y += -I$(srctree)/drivers/kernelsu/feature
-              EOF
+            # SukiSU internal include compatibility
+             ccflags-y += -I$(srctree)/drivers/kernelsu
+             ccflags-y += -I$(srctree)/drivers/kernelsu/include
+             ccflags-y += -I$(srctree)/drivers/kernelsu/policy
+             ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi
+             ccflags-y += -I$(srctree)/drivers/kernelsu/feature
+             EOF
             echo "Added SukiSU include compatibility flags to $KSU_MAKEFILE"
           else
             echo "SukiSU include compatibility flags already present"
