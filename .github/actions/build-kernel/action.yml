@@ -1560,7 +1560,7 @@ runs:
 
           [ -f "$file" ] || return 1
 
-          # Do not treat policy/uapi enum feature.h as the internal feature header.
+          # Do not treat policy/uapi enum feature.h as internal feature.h.
           if is_policy_feature_header "$file"; then
             return 1
           fi
@@ -1570,9 +1570,16 @@ runs:
             return 1
           fi
 
-          # Internal feature headers usually contain declarations/macros/includes related to SukiSU features,
-          # but should not be enum-only policy/uapi headers.
           grep -qE 'ksu_|KSU_|feature|#include' "$file" || return 1
+
+          return 0
+        }
+
+        is_nonempty_header() {
+          local file="$1"
+
+          [ -f "$file" ] || return 1
+          [ -s "$file" ] || return 1
 
           return 0
         }
@@ -1613,6 +1620,22 @@ runs:
           )
 
           return 1
+        }
+
+        install_header_everywhere() {
+          local src="$1"
+          shift
+
+          local dst
+
+          if [ -z "$src" ] || [ ! -f "$src" ]; then
+            echo "::warning::install_header_everywhere source missing: ${src:-unset}"
+            return 0
+          fi
+
+          for dst in "$@"; do
+            safe_copy_header "$src" "$dst"
+          done
         }
 
         inject_include_once() {
@@ -1664,13 +1687,33 @@ runs:
         POLICY_UAPI_DIR="$KSU_BUILTIN_DIR/policy/uapi"
         mkdir -p "$POLICY_UAPI_DIR"
 
-        echo "Syncing SukiSU include trees"
+        echo "Syncing SukiSU include/uapi trees"
 
         safe_sync_dir "$KSU_SOURCE_DIR/include" "$KSU_BUILTIN_DIR/include"
         safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/uapi"
         safe_sync_dir "$KSU_SOURCE_DIR/include/uapi" "$KSU_BUILTIN_DIR/include/uapi"
-        safe_sync_dir "$KSU_SOURCE_DIR/policy/uapi" "$KSU_BUILTIN_DIR/policy/uapi"
         safe_sync_dir "$KSU_SOURCE_DIR/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/policy/uapi" "$KSU_BUILTIN_DIR/policy/uapi"
+
+        # These two are needed by:
+        #   selinux/rules.c      -> #include "uapi/selinux.h"
+        #   supercall/dispatch.c -> #include "uapi/supercall.h"
+        safe_sync_dir "$KSU_SOURCE_DIR/selinux/uapi" "$KSU_BUILTIN_DIR/selinux/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/selinux/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/selinux/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+
+        safe_sync_dir "$KSU_SOURCE_DIR/supercall/uapi" "$KSU_BUILTIN_DIR/supercall/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/supercall/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/supercall/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+
+        safe_sync_dir "$KSU_SOURCE_DIR/sulog/uapi" "$KSU_BUILTIN_DIR/sulog/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/sulog/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/sulog/uapi" "$KSU_BUILTIN_DIR/include/uapi"
+
+        safe_sync_dir "$KSU_SOURCE_DIR/manager/uapi" "$KSU_BUILTIN_DIR/manager/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/manager/uapi" "$KSU_BUILTIN_DIR/uapi"
+        safe_sync_dir "$KSU_SOURCE_DIR/manager/uapi" "$KSU_BUILTIN_DIR/include/uapi"
 
         echo "Searching for SukiSU helper headers..."
 
@@ -1717,31 +1760,6 @@ runs:
           FEATURE_H_SRC="$(find_valid_header_by_name "feature.h" is_internal_feature_header || true)"
         fi
 
-        SULOG_UAPI_SRC="$(
-          find_first_header \
-            "sulog.h" \
-            "$KSU_SOURCE_DIR/include/uapi/sulog.h" \
-            "$KSU_SOURCE_DIR/uapi/sulog.h" \
-            "$KSU_BUILTIN_DIR/include/uapi/sulog.h" \
-            "$KSU_BUILTIN_DIR/uapi/sulog.h"
-        )"
-
-        APP_PROFILE_SRC="$(
-          find_valid_header is_real_app_profile_header \
-            "$KSU_SOURCE_DIR/include/uapi/app_profile.h" \
-            "$KSU_SOURCE_DIR/uapi/app_profile.h" \
-            "$KSU_SOURCE_DIR/policy/uapi/app_profile.h" \
-            "$KSU_SOURCE_DIR/include/app_profile.h" \
-            "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
-            "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
-            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
-          || true
-        )"
-
-        if [ -z "$APP_PROFILE_SRC" ]; then
-          APP_PROFILE_SRC="$(find_valid_header_by_name "app_profile.h" is_real_app_profile_header || true)"
-        fi
-
         POLICY_FEATURE_SRC="$(
           find_valid_header is_policy_feature_header \
             "$KSU_SOURCE_DIR/policy/uapi/feature.h" \
@@ -1757,62 +1775,151 @@ runs:
           POLICY_FEATURE_SRC="$(find_valid_header_by_name "feature.h" is_policy_feature_header || true)"
         fi
 
+        APP_PROFILE_SRC="$(
+          find_valid_header is_real_app_profile_header \
+            "$KSU_SOURCE_DIR/include/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/policy/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/manager/uapi/app_profile.h" \
+            "$KSU_SOURCE_DIR/include/app_profile.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h" \
+          || true
+        )"
+
+        if [ -z "$APP_PROFILE_SRC" ]; then
+          APP_PROFILE_SRC="$(find_valid_header_by_name "app_profile.h" is_real_app_profile_header || true)"
+        fi
+
+        SULOG_UAPI_SRC="$(
+          find_valid_header is_nonempty_header \
+            "$KSU_SOURCE_DIR/include/uapi/sulog.h" \
+            "$KSU_SOURCE_DIR/uapi/sulog.h" \
+            "$KSU_SOURCE_DIR/sulog/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h" \
+          || true
+        )"
+
+        if [ -z "$SULOG_UAPI_SRC" ]; then
+          SULOG_UAPI_SRC="$(find_valid_header_by_name "sulog.h" is_nonempty_header || true)"
+        fi
+
+        SELINUX_UAPI_SRC="$(
+          find_valid_header is_nonempty_header \
+            "$KSU_SOURCE_DIR/include/uapi/selinux.h" \
+            "$KSU_SOURCE_DIR/uapi/selinux.h" \
+            "$KSU_SOURCE_DIR/selinux/uapi/selinux.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/selinux.h" \
+            "$KSU_BUILTIN_DIR/uapi/selinux.h" \
+            "$KSU_BUILTIN_DIR/selinux/uapi/selinux.h" \
+          || true
+        )"
+
+        if [ -z "$SELINUX_UAPI_SRC" ]; then
+          SELINUX_UAPI_SRC="$(find_valid_header_by_name "selinux.h" is_nonempty_header || true)"
+        fi
+
+        SUPERCALL_UAPI_SRC="$(
+          find_valid_header is_nonempty_header \
+            "$KSU_SOURCE_DIR/include/uapi/supercall.h" \
+            "$KSU_SOURCE_DIR/uapi/supercall.h" \
+            "$KSU_SOURCE_DIR/supercall/uapi/supercall.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/supercall.h" \
+            "$KSU_BUILTIN_DIR/uapi/supercall.h" \
+            "$KSU_BUILTIN_DIR/supercall/uapi/supercall.h" \
+          || true
+        )"
+
+        if [ -z "$SUPERCALL_UAPI_SRC" ]; then
+          SUPERCALL_UAPI_SRC="$(find_valid_header_by_name "supercall.h" is_nonempty_header || true)"
+        fi
+
         echo "Found klog.h:                ${KLOG_SRC:-not found}"
         echo "Found ksu.h:                 ${KSU_H_SRC:-not found}"
         echo "Found arch.h:                ${ARCH_H_SRC:-not found}"
         echo "Found internal feature.h:    ${FEATURE_H_SRC:-not found}"
-        echo "Found uapi/sulog.h:          ${SULOG_UAPI_SRC:-not found}"
-        echo "Found real app_profile.h:    ${APP_PROFILE_SRC:-not found}"
         echo "Found policy/uapi feature.h: ${POLICY_FEATURE_SRC:-not found}"
+        echo "Found real app_profile.h:    ${APP_PROFILE_SRC:-not found}"
+        echo "Found uapi/sulog.h:          ${SULOG_UAPI_SRC:-not found}"
+        echo "Found uapi/selinux.h:        ${SELINUX_UAPI_SRC:-not found}"
+        echo "Found uapi/supercall.h:      ${SUPERCALL_UAPI_SRC:-not found}"
 
         if [ -n "$KLOG_SRC" ]; then
-          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/feature/klog.h"
-          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/klog.h"
-          safe_copy_header "$KLOG_SRC" "$KSU_BUILTIN_DIR/include/klog.h"
+          install_header_everywhere "$KLOG_SRC" \
+            "$KSU_BUILTIN_DIR/feature/klog.h" \
+            "$KSU_BUILTIN_DIR/klog.h" \
+            "$KSU_BUILTIN_DIR/include/klog.h"
         else
           echo "::warning::Could not find klog.h in SukiSU source tree"
         fi
 
         if [ -n "$KSU_H_SRC" ]; then
-          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/ksu.h"
-          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/include/ksu.h"
-          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/core/ksu.h"
-          safe_copy_header "$KSU_H_SRC" "$KSU_BUILTIN_DIR/feature/ksu.h"
+          install_header_everywhere "$KSU_H_SRC" \
+            "$KSU_BUILTIN_DIR/ksu.h" \
+            "$KSU_BUILTIN_DIR/include/ksu.h" \
+            "$KSU_BUILTIN_DIR/core/ksu.h" \
+            "$KSU_BUILTIN_DIR/feature/ksu.h"
         else
           echo "::warning::Could not find ksu.h in SukiSU source tree"
         fi
 
         if [ -n "$ARCH_H_SRC" ]; then
-          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/arch.h"
-          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/include/arch.h"
-          safe_copy_header "$ARCH_H_SRC" "$KSU_BUILTIN_DIR/feature/arch.h"
+          install_header_everywhere "$ARCH_H_SRC" \
+            "$KSU_BUILTIN_DIR/arch.h" \
+            "$KSU_BUILTIN_DIR/include/arch.h" \
+            "$KSU_BUILTIN_DIR/feature/arch.h"
         else
           echo "::warning::Could not find arch.h in SukiSU source tree"
         fi
 
         if [ -n "$FEATURE_H_SRC" ]; then
-          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature.h"
-          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/include/feature.h"
-          safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
+          install_header_everywhere "$FEATURE_H_SRC" \
+            "$KSU_BUILTIN_DIR/feature.h" \
+            "$KSU_BUILTIN_DIR/include/feature.h" \
+            "$KSU_BUILTIN_DIR/feature/feature.h"
         else
           echo "::warning::Could not find validated internal SukiSU feature.h"
         fi
 
         if [ -n "$SULOG_UAPI_SRC" ]; then
-          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/uapi/sulog.h"
-          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
-          safe_copy_header "$SULOG_UAPI_SRC" "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
+          install_header_everywhere "$SULOG_UAPI_SRC" \
+            "$KSU_BUILTIN_DIR/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/sulog.h" \
+            "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
         else
           echo "::warning::Could not find uapi/sulog.h in SukiSU source tree"
+        fi
+
+        if [ -n "$SELINUX_UAPI_SRC" ]; then
+          install_header_everywhere "$SELINUX_UAPI_SRC" \
+            "$KSU_BUILTIN_DIR/uapi/selinux.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/selinux.h" \
+            "$KSU_BUILTIN_DIR/selinux/uapi/selinux.h"
+        else
+          echo "::warning::Could not find uapi/selinux.h in SukiSU source tree"
+        fi
+
+        if [ -n "$SUPERCALL_UAPI_SRC" ]; then
+          install_header_everywhere "$SUPERCALL_UAPI_SRC" \
+            "$KSU_BUILTIN_DIR/uapi/supercall.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/supercall.h" \
+            "$KSU_BUILTIN_DIR/supercall/uapi/supercall.h"
+        else
+          echo "::warning::Could not find uapi/supercall.h in SukiSU source tree"
         fi
 
         echo "Installing real app_profile.h layout"
 
         if [ -n "$APP_PROFILE_SRC" ] && is_real_app_profile_header "$APP_PROFILE_SRC"; then
-          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/uapi/app_profile.h"
-          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/include/uapi/app_profile.h"
-          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h"
-          safe_copy_header "$APP_PROFILE_SRC" "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
+          install_header_everywhere "$APP_PROFILE_SRC" \
+            "$KSU_BUILTIN_DIR/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/policy/uapi/app_profile.h" \
+            "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"
         else
           echo "::error::Real app_profile.h with required profile structs was not found."
           echo "SukiSU manager/policy sources require real app profile definitions."
@@ -1830,7 +1937,7 @@ runs:
             [ -f "$candidate" ] || continue
             echo "=== $candidate ==="
             grep -nE 'struct[[:space:]]+app_profile|struct[[:space:]]+root_profile|struct[[:space:]]+non_root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS' "$candidate" || true
-            sed -n '1,80p' "$candidate" || true
+            sed -n '1,100p' "$candidate" || true
           done < <(
             find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
               -type f \
@@ -1844,9 +1951,10 @@ runs:
         echo "Installing policy/uapi/feature.h"
 
         if [ -n "$POLICY_FEATURE_SRC" ] && is_policy_feature_header "$POLICY_FEATURE_SRC"; then
-          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/policy/uapi/feature.h"
-          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/uapi/feature.h"
-          safe_copy_header "$POLICY_FEATURE_SRC" "$KSU_BUILTIN_DIR/include/uapi/feature.h"
+          install_header_everywhere "$POLICY_FEATURE_SRC" \
+            "$KSU_BUILTIN_DIR/policy/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/feature.h"
         else
           {
             printf '%s\n' '#ifndef __KSU_POLICY_UAPI_FEATURE_H'
@@ -1861,8 +1969,9 @@ runs:
             printf '%s\n' '#endif /* __KSU_POLICY_UAPI_FEATURE_H */'
           } > "$POLICY_UAPI_DIR/feature.h"
 
-          safe_copy_header "$POLICY_UAPI_DIR/feature.h" "$KSU_BUILTIN_DIR/uapi/feature.h"
-          safe_copy_header "$POLICY_UAPI_DIR/feature.h" "$KSU_BUILTIN_DIR/include/uapi/feature.h"
+          install_header_everywhere "$POLICY_UAPI_DIR/feature.h" \
+            "$KSU_BUILTIN_DIR/uapi/feature.h" \
+            "$KSU_BUILTIN_DIR/include/uapi/feature.h"
 
           echo "Created enum fallback: $POLICY_UAPI_DIR/feature.h"
         fi
@@ -1897,13 +2006,15 @@ runs:
           printf '%s\n' '#define KSU_APP_PROFILE_VER 2'
           printf '%s\n' '#endif'
           printf '%s\n' ''
-          printf '%s\n' '#ifndef KSU_DEFAULT_SELINUX_DOMAIN'
-          printf '%s\n' '#define KSU_DEFAULT_SELINUX_DOMAIN "u:r:su:s0"'
-          printf '%s\n' '#endif'
-          printf '%s\n' ''
           printf '%s\n' '#ifndef KSU_NS_INHERITED'
           printf '%s\n' '#define KSU_NS_INHERITED 0'
           printf '%s\n' '#endif'
+          printf '%s\n' ''
+          printf '%s\n' '/*'
+          printf '%s\n' ' * Do not define KSU_DEFAULT_SELINUX_DOMAIN here.'
+          printf '%s\n' ' * Some SukiSU policy sources define it locally using KERNEL_SU_DOMAIN,'
+          printf '%s\n' ' * and defining it in this compatibility header causes macro redefinition warnings.'
+          printf '%s\n' ' */'
           printf '%s\n' ''
           printf '%s\n' '#endif /* __KSU_POLICY_COMPAT_H */'
         } > "$KSU_POLICY_COMPAT_H"
@@ -1937,12 +2048,19 @@ runs:
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/uapi'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/core'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/feature'
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog'
-              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/hook'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/infra'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/manager'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/manager/uapi'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy'
               printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/policy/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/runtime'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/selinux'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/selinux/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/sulog/uapi'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/supercall'
+              printf '%s\n' 'ccflags-y += -I$(srctree)/drivers/kernelsu/supercall/uapi'
             } >> "$KSU_MAKEFILE"
 
             echo "Added SukiSU include compatibility flags to $KSU_MAKEFILE"
@@ -1956,12 +2074,19 @@ runs:
               'drivers/kernelsu/uapi' \
               'drivers/kernelsu/core' \
               'drivers/kernelsu/feature' \
-              'drivers/kernelsu/sulog' \
-              'drivers/kernelsu/sulog/uapi' \
+              'drivers/kernelsu/hook' \
+              'drivers/kernelsu/infra' \
               'drivers/kernelsu/manager' \
               'drivers/kernelsu/manager/uapi' \
               'drivers/kernelsu/policy' \
-              'drivers/kernelsu/policy/uapi'; do
+              'drivers/kernelsu/policy/uapi' \
+              'drivers/kernelsu/runtime' \
+              'drivers/kernelsu/selinux' \
+              'drivers/kernelsu/selinux/uapi' \
+              'drivers/kernelsu/sulog' \
+              'drivers/kernelsu/sulog/uapi' \
+              'drivers/kernelsu/supercall' \
+              'drivers/kernelsu/supercall/uapi'; do
 
               if ! grep -q "$inc" "$KSU_MAKEFILE"; then
                 printf '%s\n' "ccflags-y += -I\$(srctree)/$inc" >> "$KSU_MAKEFILE"
@@ -2132,6 +2257,12 @@ runs:
           "$KSU_BUILTIN_DIR/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
+          "$KSU_BUILTIN_DIR/uapi/selinux.h"
+          "$KSU_BUILTIN_DIR/include/uapi/selinux.h"
+          "$KSU_BUILTIN_DIR/selinux/uapi/selinux.h"
+          "$KSU_BUILTIN_DIR/uapi/supercall.h"
+          "$KSU_BUILTIN_DIR/include/uapi/supercall.h"
+          "$KSU_BUILTIN_DIR/supercall/uapi/supercall.h"
           "$KSU_BUILTIN_DIR/feature_id_compat.h"
         )
 
@@ -2164,7 +2295,7 @@ runs:
 
           if ! is_real_app_profile_header "$f"; then
             echo "::error::Copied app_profile.h is not a real profile header: $f"
-            sed -n '1,120p' "$f" || true
+            sed -n '1,140p' "$f" || true
             exit 1
           fi
         done
@@ -2178,7 +2309,7 @@ runs:
 
           if ! is_policy_feature_header "$f"; then
             echo "::error::Copied policy feature.h is not a valid policy feature header: $f"
-            sed -n '1,100p' "$f" || true
+            sed -n '1,120p' "$f" || true
             exit 1
           fi
         done
@@ -2193,11 +2324,27 @@ runs:
 
             if ! is_internal_feature_header "$f"; then
               echo "::error::Copied internal feature.h failed validation: $f"
-              sed -n '1,100p' "$f" || true
+              sed -n '1,120p' "$f" || true
               exit 1
             fi
           done
         fi
+
+        echo "Validating selinux/supercall uapi headers"
+
+        for f in \
+          "$KSU_BUILTIN_DIR/uapi/selinux.h" \
+          "$KSU_BUILTIN_DIR/selinux/uapi/selinux.h" \
+          "$KSU_BUILTIN_DIR/uapi/supercall.h" \
+          "$KSU_BUILTIN_DIR/supercall/uapi/supercall.h"; do
+
+          if [ ! -s "$f" ]; then
+            echo "::error::Required non-empty uapi header missing or empty: $f"
+            echo "All matching files:"
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" -type f \( -name 'selinux.h' -o -name 'supercall.h' \) -print 2>/dev/null || true
+            exit 1
+          fi
+        done
 
         echo "Checking for forbidden feature macro fallbacks:"
         for f in \
@@ -2224,7 +2371,7 @@ runs:
           -E 'struct app_profile|struct root_profile|struct non_root_profile|KSU_APP_PROFILE_VER|KSU_MAX_PACKAGE_NAME|KSU_MAX_GROUPS' \
           "$KSU_BUILTIN_DIR" \
           "$KSU_SOURCE_DIR" \
-          2>/dev/null | head -n 120 || true
+          2>/dev/null | head -n 140 || true
 
         echo "Dumping app_profile.h previews:"
         for f in \
@@ -2234,7 +2381,7 @@ runs:
           "$KSU_BUILTIN_DIR/manager/uapi/app_profile.h"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            sed -n '1,120p' "$f" || true
+            sed -n '1,140p' "$f" || true
           fi
         done
 
@@ -2246,6 +2393,20 @@ runs:
           "$KSU_BUILTIN_DIR/feature.h" \
           "$KSU_BUILTIN_DIR/include/feature.h" \
           "$KSU_BUILTIN_DIR/feature/feature.h"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,120p' "$f" || true
+          fi
+        done
+
+        echo "Dumping selinux/supercall uapi header previews:"
+        for f in \
+          "$KSU_BUILTIN_DIR/uapi/selinux.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/selinux.h" \
+          "$KSU_BUILTIN_DIR/selinux/uapi/selinux.h" \
+          "$KSU_BUILTIN_DIR/uapi/supercall.h" \
+          "$KSU_BUILTIN_DIR/include/uapi/supercall.h" \
+          "$KSU_BUILTIN_DIR/supercall/uapi/supercall.h"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
             sed -n '1,100p' "$f" || true
@@ -2265,21 +2426,21 @@ runs:
           "$KSU_BUILTIN_DIR/policy/app_profile.c"; do
           if [ -f "$f" ]; then
             echo "=== $f ==="
-            sed -n '1,35p' "$f" || true
+            sed -n '1,40p' "$f" || true
           fi
         done
 
-        echo "Dumping ksu.h locations:"
-        find -L "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
-
-        echo "Dumping klog.h locations:"
-        find -L "$KSU_BUILTIN_DIR" -type f -name 'klog.h' -print || true
-
-        echo "Dumping arch.h locations:"
-        find -L "$KSU_BUILTIN_DIR" -type f -name 'arch.h' -print || true
-
-        echo "Dumping sulog.h locations:"
-        find -L "$KSU_BUILTIN_DIR" -type f -name 'sulog.h' -print || true
+        echo "Dumping selected header locations:"
+        find -L "$KSU_BUILTIN_DIR" -type f \( \
+          -name 'ksu.h' \
+          -o -name 'klog.h' \
+          -o -name 'arch.h' \
+          -o -name 'sulog.h' \
+          -o -name 'selinux.h' \
+          -o -name 'supercall.h' \
+          -o -name 'app_profile.h' \
+          -o -name 'feature.h' \
+        \) -print || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
