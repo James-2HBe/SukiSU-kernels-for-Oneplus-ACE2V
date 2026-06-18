@@ -1718,6 +1718,33 @@ runs:
           else
             echo "::warning::sucompat.h not found: $SUCOMPAT_H"
           fi
+
+          echo "Patching SukiSU syscall_event_bridge static-key bool usages"
+
+          for bridge in \
+            "$KSU_BUILTIN_DIR/hook/syscall_event_bridge.c" \
+            "$KSU_SOURCE_DIR/hook/syscall_event_bridge.c"; do
+
+            if [ -f "$bridge" ]; then
+              if grep -qE '![[:space:]]*ksu_su_compat_enabled|\bif[[:space:]]*\([[:space:]]*ksu_su_compat_enabled[[:space:]]*\)|\belse[[:space:]]+if[[:space:]]*\([[:space:]]*ksu_su_compat_enabled[[:space:]]*\)' "$bridge"; then
+                perl -0777 -i -pe '
+                  s/!\s*ksu_su_compat_enabled/!static_branch_likely(\&ksu_su_compat_enabled)/g;
+                  s/\bif\s*\(\s*ksu_su_compat_enabled\s*\)/if (static_branch_likely(\&ksu_su_compat_enabled))/g;
+                  s/\belse\s+if\s*\(\s*ksu_su_compat_enabled\s*\)/else if (static_branch_likely(\&ksu_su_compat_enabled))/g;
+                ' "$bridge"
+
+                if ! grep -q '#include <linux/jump_label.h>' "$bridge"; then
+                  sed -i '1i #include <linux/jump_label.h>' "$bridge"
+                fi
+
+                echo "Patched static-key bool usages in: $bridge"
+              else
+                echo "No plain bool usages found in: $bridge"
+              fi
+            else
+              echo "Bridge file not found, skipping: $bridge"
+            fi
+          done
         else
           echo "Kernel call sites do not require static-key sucompat compatibility"
         fi
@@ -1752,10 +1779,10 @@ runs:
         sed -n '1,80p' "$POLICY_UAPI_DIR/feature.h" || true
 
         echo "Dumping ksu.h locations:"
-        find "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
+        find -L "$KSU_BUILTIN_DIR" -type f -name 'ksu.h' -print || true
 
         echo "Dumping klog.h locations:"
-        find "$KSU_BUILTIN_DIR" -type f -name 'klog.h' -print || true
+        find -L "$KSU_BUILTIN_DIR" -type f -name 'klog.h' -print || true
 
         echo "Dumping SukiSU Makefile include compatibility lines:"
         if [ -f "$KSU_MAKEFILE" ]; then
@@ -1770,6 +1797,17 @@ runs:
         if [ -f "$SUCOMPAT_H" ]; then
           grep -nE 'jump_label|ksu_su_compat_enabled|static_key_true' "$SUCOMPAT_H" || true
         fi
+
+        echo "Dumping syscall_event_bridge compatibility state:"
+        for bridge in \
+          "$KSU_BUILTIN_DIR/hook/syscall_event_bridge.c" \
+          "$KSU_SOURCE_DIR/hook/syscall_event_bridge.c"; do
+
+          if [ -f "$bridge" ]; then
+            echo "Bridge file: $bridge"
+            grep -nE 'jump_label|ksu_su_compat_enabled|static_branch_likely' "$bridge" || true
+          fi
+        done
 
         if [ "$MISSING" -gt 0 ]; then
           echo "::warning::Some SukiSU headers are still missing. Build may fail if this SukiSU revision requires them."
