@@ -1628,7 +1628,7 @@ runs:
           safe_copy_header "$FEATURE_H_SRC" "$KSU_BUILTIN_DIR/feature/feature.h"
         else
           echo "::warning::Could not find real SukiSU feature.h"
-          echo "::warning::Feature IDs will be provided by feature_id_compat.h"
+          echo "::warning::Feature IDs will be provided by fallback patches"
         fi
 
         if [ -n "$SULOG_UAPI_SRC" ]; then
@@ -1770,12 +1770,66 @@ runs:
               printf '%s\n' ''
               printf '%s\n' '# SukiSU feature-id compatibility'
               printf '%s\n' 'ccflags-y += -include $(srctree)/drivers/kernelsu/feature_id_compat.h'
+              printf '%s\n' 'subdir-ccflags-y += -include $(srctree)/drivers/kernelsu/feature_id_compat.h'
             } >> "$KSU_MAKEFILE"
 
             echo "Added forced feature_id_compat.h include to $KSU_MAKEFILE"
           else
             echo "feature_id_compat.h forced include already present"
           fi
+        fi
+
+        echo "Patching direct SukiSU feature ID fallbacks into source files"
+
+        KERNEL_UMOUNT_C="$KSU_BUILTIN_DIR/feature/kernel_umount.c"
+        SULOG_C="$KSU_BUILTIN_DIR/feature/sulog.c"
+
+        if [ -f "$KERNEL_UMOUNT_C" ]; then
+          if ! grep -q 'SukiSU direct feature-id fallback: kernel_umount' "$KERNEL_UMOUNT_C"; then
+            tmp_file="$(mktemp)"
+
+            {
+              printf '%s\n' '/* SukiSU direct feature-id fallback: kernel_umount */'
+              printf '%s\n' '#ifndef KSU_FEATURE_KERNEL_UMOUNT'
+              printf '%s\n' '#define KSU_FEATURE_KERNEL_UMOUNT 1001'
+              printf '%s\n' '#endif'
+              printf '%s\n' ''
+              cat "$KERNEL_UMOUNT_C"
+            } > "$tmp_file"
+
+            cat "$tmp_file" > "$KERNEL_UMOUNT_C"
+            rm -f "$tmp_file"
+
+            echo "Injected KSU_FEATURE_KERNEL_UMOUNT fallback into $KERNEL_UMOUNT_C"
+          else
+            echo "KSU_FEATURE_KERNEL_UMOUNT fallback already present in $KERNEL_UMOUNT_C"
+          fi
+        else
+          echo "::warning::kernel_umount.c not found: $KERNEL_UMOUNT_C"
+        fi
+
+        if [ -f "$SULOG_C" ]; then
+          if ! grep -q 'SukiSU direct feature-id fallback: sulog' "$SULOG_C"; then
+            tmp_file="$(mktemp)"
+
+            {
+              printf '%s\n' '/* SukiSU direct feature-id fallback: sulog */'
+              printf '%s\n' '#ifndef KSU_FEATURE_SULOG'
+              printf '%s\n' '#define KSU_FEATURE_SULOG 1002'
+              printf '%s\n' '#endif'
+              printf '%s\n' ''
+              cat "$SULOG_C"
+            } > "$tmp_file"
+
+            cat "$tmp_file" > "$SULOG_C"
+            rm -f "$tmp_file"
+
+            echo "Injected KSU_FEATURE_SULOG fallback into $SULOG_C"
+          else
+            echo "KSU_FEATURE_SULOG fallback already present in $SULOG_C"
+          fi
+        else
+          echo "::warning::sulog.c not found: $SULOG_C"
         fi
 
         echo "Checking SukiSU sucompat static-key compatibility"
@@ -1908,6 +1962,18 @@ runs:
         if [ -f "$KSU_BUILTIN_DIR/feature_id_compat.h" ]; then
           sed -n '1,120p' "$KSU_BUILTIN_DIR/feature_id_compat.h" || true
         fi
+
+        echo "Dumping direct feature ID fallback state:"
+        for f in \
+          "$KSU_BUILTIN_DIR/feature/kernel_umount.c" \
+          "$KSU_BUILTIN_DIR/feature/sulog.c"; do
+
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,40p' "$f" || true
+            grep -nE 'KSU_FEATURE_KERNEL_UMOUNT|KSU_FEATURE_SULOG|direct feature-id fallback' "$f" || true
+          fi
+        done
 
         echo "Dumping app_profile.h preview:"
         sed -n '1,80p' "$POLICY_UAPI_DIR/app_profile.h" || true
