@@ -782,97 +782,6 @@ runs:
           fi
         fi
 
-        retry_fetch_archive() {
-          local url="$1"
-          local branch="${2:-main}"
-          local target_dir="${3:-}"
-
-          local max_attempts=3
-          local attempt=1
-
-          local repo_name
-          repo_name="$(basename "$url" .git)"
-
-          if [ -z "$target_dir" ]; then
-            target_dir="$GITHUB_WORKSPACE/$repo_name"
-          fi
-
-          local safe_branch
-          safe_branch="$(echo "$branch" | tr '/' '_')"
-
-          local archive_name="${repo_name}_${safe_branch}.tar.gz"
-          local shm_path="/dev/shm/$archive_name"
-
-          local nproc_count
-          nproc_count="$(nproc 2>/dev/null || echo 4)"
-
-          local aria_log_flags="--quiet --summary-interval=0"
-          if [ "${{ inputs.debug }}" = "true" ]; then
-            aria_log_flags="--summary-interval=5"
-          fi
-
-          local aria2_headers=(
-            "--header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            "--header=Accept: */*"
-            "--header=Connection: keep-alive"
-          )
-
-          local download_url=""
-
-          if [[ "$url" == *"github.com"* ]]; then
-            download_url="${url%.git}/archive/refs/heads/${branch}.tar.gz"
-          elif [[ "$url" == *"gitlab.com"* ]]; then
-            download_url="${url%.git}/-/archive/${branch}/${repo_name}-${branch}.tar.gz"
-          else
-            echo "::error::Unsupported host: $url"
-            return 1
-          fi
-
-          while [ "$attempt" -le "$max_attempts" ]; do
-            echo "Attempt $attempt/$max_attempts: high-speed fetch for $repo_name ($branch)"
-            echo "Download URL: $download_url"
-            echo "Target dir: $target_dir"
-
-            rm -f "$shm_path"
-            rm -rf "$target_dir"
-            mkdir -p "$target_dir"
-
-            if aria2c \
-              -x16 -s16 -j16 -k1M \
-              --retry-wait=2 \
-              --max-tries=5 \
-              -d "/dev/shm" \
-              -o "$archive_name" \
-              --allow-overwrite=true \
-              "${aria2_headers[@]}" \
-              $aria_log_flags \
-              "$download_url"; then
-
-              if tar \
-                -I "pigz -p $nproc_count -b 256" \
-                -x \
-                --record-size=1M \
-                -f "$shm_path" \
-                -C "$target_dir" \
-                --strip-components=1 \
-                --no-same-owner; then
-
-                echo "Success: $repo_name synced into $target_dir"
-                rm -f "$shm_path"
-                return 0
-              fi
-            fi
-
-            echo "Attempt $attempt failed, clearing temporary files and retrying..."
-            rm -rf "$target_dir" "$shm_path" 2>/dev/null || true
-            sleep 5
-            attempt=$((attempt + 1))
-          done
-
-          echo "::error::All attempts failed for $url"
-          return 1
-        }
-
         retry_clone() {
           local url="$1"
           local branch="${2:-main}"
@@ -944,6 +853,48 @@ runs:
           return 1
         }
 
+        clone_susfs_ref() {
+          local ref="$1"
+          local dir="$2"
+          local url="https://gitlab.com/simonpunk/susfs4ksu.git"
+
+          echo "Cloning SUSFS from $url"
+          echo "Requested ref: $ref"
+
+          rm -rf "$dir"
+
+          # First try as branch/tag.
+          if git clone --depth 1 --branch "$ref" "$url" "$dir"; then
+            echo "SUSFS cloned as branch/tag: $ref"
+            return 0
+          fi
+
+          echo "Branch/tag clone failed. Trying generic clone + checkout..."
+
+          rm -rf "$dir"
+
+          if ! git clone --depth 1 "$url" "$dir"; then
+            echo "::error::Initial SUSFS clone failed"
+            return 1
+          fi
+
+          cd "$dir"
+
+          # This supports commit SHA, tag, or remote ref when possible.
+          git fetch --depth 1 origin "$ref" || true
+
+          if git checkout "$ref"; then
+            cd "$GITHUB_WORKSPACE"
+            echo "SUSFS checked out ref: $ref"
+            return 0
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+
+          echo "::error::Failed to checkout SUSFS ref: $ref"
+          return 1
+        }
+
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
 
         if [ "${{ inputs.enable_adios }}" = "true" ]; then
@@ -955,24 +906,31 @@ runs:
         if [ "${OP_SUSFS:-false}" = "true" ]; then
           echo "Using SUSFS branch/ref: $SUSFS_BRANCH"
 
-          rm -rf "$SUSFS_FOLDER"
-
-          if ! retry_fetch_archive "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_BRANCH" "$SUSFS_FOLDER"; then
-            echo "::error::Failed to fetch SUSFS archive after multiple attempts"
+          if ! clone_susfs_ref "$SUSFS_BRANCH" "$SUSFS_FOLDER"; then
+            echo "::error::Failed to clone SUSFS ref: $SUSFS_BRANCH"
             exit 1
           fi
 
           if [ ! -d "$SUSFS_FOLDER/kernel_patches" ]; then
-            echo "::error::SUSFS folder was not extracted correctly: $SUSFS_FOLDER"
-            echo "Workspace contents:"
-            find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -print || true
+            echo "::error::SUSFS folder was not cloned correctly: $SUSFS_FOLDER"
+            echo "SUSFS folder contents:"
+            find "$SUSFS_FOLDER" -maxdepth 3 -type d -print || true
             exit 1
           fi
 
+          SUSFS_COMMIT_SHA="$(git -C "$SUSFS_FOLDER" rev-parse HEAD 2>/dev/null || echo unknown)"
+
           {
             echo "SUSFS_REF=$SUSFS_BRANCH"
-            echo "SUSFS_COMMIT_SHA=unknown"
+            echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA"
           } >> "$GITHUB_ENV"
+
+          echo "✅ SUSFS cloned"
+          echo "   Ref: $SUSFS_BRANCH"
+          echo "   Commit: $SUSFS_COMMIT_SHA"
+
+          echo "Available SUSFS kernel patches:"
+          find "$SUSFS_FOLDER/kernel_patches" -maxdepth 2 -type f -name '*.patch' -print || true
         fi
 
         echo "Dependencies cloned"
@@ -1545,6 +1503,50 @@ runs:
         if [ -d "$SUSFS_FOLDER/kernel_patches/include/linux" ]; then
           cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
         fi
+
+        SUSVER="unknown"
+
+        for f in \
+          "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" \
+          "$COMMON_KERNEL_FOLDER/include/linux/susfs_def.h" \
+          "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" \
+          "$SUSFS_FOLDER/kernel_patches/include/linux/susfs_def.h"; do
+
+          if [ -f "$f" ]; then
+            found="$(
+              grep -E 'SUSFS_VERSION|SUSFS_VERSION_STR|SUSFS_VER' "$f" 2>/dev/null \
+                | grep -Eo '"[^"]+"' \
+                | head -n1 \
+                | tr -d '"' \
+                || true
+            )"
+
+            if [ -n "$found" ]; then
+              SUSVER="$found"
+              break
+            fi
+          fi
+        done
+
+        echo "Detected SUSFS version before patching: $SUSVER"
+
+        case "$SUSVER" in
+          v1.5.8|v1.5.9|v1.5.10|v1.5.11|v1.5.12|v2.0.0|v2.1.0|v2.2.0)
+            echo "✅ Supported SUSFS version: $SUSVER"
+            ;;
+          unknown)
+            echo "::warning::Could not detect SUSFS version. Continuing because patch file exists."
+            ;;
+          *)
+            echo "::warning::Untested SUSFS version: $SUSVER"
+            echo "Continuing, but patch compatibility is not guaranteed."
+            ;;
+        esac
+
+        {
+          echo "SUSVER=$SUSVER"
+          echo "NEED_HOOKS=false"
+        } >> "$GITHUB_ENV"
     
         cd "$COMMON_KERNEL_FOLDER"
     
@@ -1566,7 +1568,6 @@ runs:
     
           echo "Attempting manual repair for SUSFS fs/namespace.c hunk #1"
     
-          # Add susfs_def.h near the normal namespace includes.
           if ! grep -qF '#include <linux/susfs_def.h>' "$ns_file"; then
             if grep -qF '#include <linux/mnt_idmapping.h>' "$ns_file"; then
               sed -i '/#include <linux\/mnt_idmapping\.h>/a\
@@ -1586,8 +1587,6 @@ runs:
             fi
           fi
     
-          # Some OnePlus 6.6.30 trees do not carry trace/hooks/fs.h in namespace.c.
-          # SUSFS expects the fs hook include in this file.
           if ! grep -qF '#include <trace/hooks/fs.h>' "$ns_file"; then
             if grep -qF '#include <trace/hooks/blk.h>' "$ns_file"; then
               sed -i '/#include <trace\/hooks\/blk\.h>/a #include <trace/hooks/fs.h>' "$ns_file"
@@ -1598,7 +1597,6 @@ runs:
             fi
           fi
     
-          # Add the SUSFS extern/static-key block before mount_max.
           if ! grep -qF 'susfs_is_sdcard_android_data_not_decrypted' "$ns_file"; then
             if grep -qF '/* Maximum number of mounts in a mount namespace */' "$ns_file"; then
               sed -i '/\/\* Maximum number of mounts in a mount namespace \*\//i\
@@ -1781,9 +1779,6 @@ runs:
             echo "No .rej files were produced."
           fi
     
-          # Known repair path:
-          # android15-6.6.30 OnePlus trees can fail only fs/namespace.c hunk #1
-          # because the top include block differs from upstream GKI.
           if [ "$KMI" = "android15-6.6" ] && [ -f "./fs/namespace.c.rej" ]; then
             echo "::warning::Detected fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
     
@@ -1887,6 +1882,7 @@ runs:
         }
     
         set_config CONFIG_KSU_SUSFS y
+        set_config CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT y
         set_config CONFIG_KSU_SUSFS_SUS_PATH y
         set_config CONFIG_KSU_SUSFS_SUS_MOUNT y
         set_config CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT y
@@ -1900,11 +1896,13 @@ runs:
         set_config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS y
         set_config CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG y
         set_config CONFIG_KSU_SUSFS_OPEN_REDIRECT y
+        set_config CONFIG_KSU_SUSFS_SUS_MAP y
+        set_config CONFIG_KSU_SUSFS_SUS_SU n
     
         echo "SUSFS defconfig entries:"
         grep -nE '^CONFIG_KSU_SUSFS' "$DEFCONFIG" || true
     
-        SUSVER="unknown"
+        SUSVER_FINAL="${SUSVER:-unknown}"
     
         for f in \
           "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" \
@@ -1922,21 +1920,21 @@ runs:
             )"
     
             if [ -n "$found" ]; then
-              SUSVER="$found"
+              SUSVER_FINAL="$found"
               break
             fi
           fi
         done
     
-        echo "Detected SUSFS version: $SUSVER"
+        echo "Detected SUSFS version: $SUSVER_FINAL"
     
         {
-          echo "SUSVER=$SUSVER"
+          echo "SUSVER=$SUSVER_FINAL"
           echo "SUSFS_PATCH_APPLIED=true"
         } >> "$GITHUB_ENV"
     
         if [ -f "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" ]; then
-          echo "$SUSVER" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+          echo "$SUSVER_FINAL" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         fi
     
         echo "✅ SukiSU Ultra patch step completed"
