@@ -1456,9 +1456,9 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Apply Patches SukiSU Ultra"
-    
+
         cd "$CONFIG_FOLDER"
-    
+
         if [ "${OP_SUSFS:-false}" = "true" ]; then
           if [ ! -d "$SUSFS_FOLDER/kernel_patches" ]; then
             echo "::error::SUSFS folder missing or invalid: $SUSFS_FOLDER"
@@ -1467,39 +1467,39 @@ runs:
             find "$GITHUB_WORKSPACE" -maxdepth 3 -type d -print || true
             exit 1
           fi
-    
+
           SUSFS_COMMIT_SHA="$(
             git -C "$SUSFS_FOLDER" rev-parse HEAD 2>/dev/null || echo unknown
           )"
-    
+
           {
             echo "SUSFS_REF=${SUSFS_REF:-${SUSFS_KERNEL_BRANCH:-unknown}}"
             echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA"
           } >> "$GITHUB_ENV"
         fi
-    
+
         rm -rf SukiSU_patch
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
-    
+
         cd "$KERNEL_PLATFORM_FOLDER"
-    
+
         echo "Fetching SUSFS patches"
-    
+
         SUSFS_SRC_PATCH="$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
-    
+
         if [ ! -f "$SUSFS_SRC_PATCH" ]; then
           echo "::error::SUSFS source patch not found: $SUSFS_SRC_PATCH"
           echo "Available SUSFS patches:"
           find "$SUSFS_FOLDER/kernel_patches" -maxdepth 2 -type f -name '*.patch' -print || true
           exit 1
         fi
-    
+
         cp "$SUSFS_SRC_PATCH" "$COMMON_KERNEL_FOLDER/"
-    
+
         if [ -d "$SUSFS_FOLDER/kernel_patches/fs" ]; then
           cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/" || true
         fi
-    
+
         if [ -d "$SUSFS_FOLDER/kernel_patches/include/linux" ]; then
           cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
         fi
@@ -1547,46 +1547,46 @@ runs:
           echo "SUSVER=$SUSVER"
           echo "NEED_HOOKS=false"
         } >> "$GITHUB_ENV"
-    
+
         cd "$COMMON_KERNEL_FOLDER"
-    
+
         SUBLEVEL="$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')"
         KMI="${ANDROID_VER}-${KERNEL_VER}"
-    
+
         echo "Detected KMI: $KMI"
         echo "Detected SUBLEVEL: $SUBLEVEL"
-    
+
         SUSFS_PATCH_APPLIED=false
-    
+
         repair_namespace_hunk1() {
           local ns_file="./fs/namespace.c"
-    
+
           if [ ! -f "$ns_file" ]; then
             echo "::error::Cannot repair namespace hunk: $ns_file not found"
             return 1
           fi
-    
+
           echo "Attempting manual repair for SUSFS fs/namespace.c hunk #1"
-    
+
           if ! grep -qF '#include <linux/susfs_def.h>' "$ns_file"; then
             if grep -qF '#include <linux/mnt_idmapping.h>' "$ns_file"; then
               sed -i '/#include <linux\/mnt_idmapping\.h>/a\
-              #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-              #include <linux/susfs_def.h>\
-              #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
+        #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+        #include <linux/susfs_def.h>\
+        #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
             elif grep -qF '#include <linux/shmem_fs.h>' "$ns_file"; then
               sed -i '/#include <linux\/shmem_fs\.h>/a\
-              #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-              #include <linux/susfs_def.h>\
-              #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
+        #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+        #include <linux/susfs_def.h>\
+        #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
             else
               sed -i '1i\
-              #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-              #include <linux/susfs_def.h>\
-              #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
+        #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+        #include <linux/susfs_def.h>\
+        #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT' "$ns_file"
             fi
           fi
-    
+
           if ! grep -qF '#include <trace/hooks/fs.h>' "$ns_file"; then
             if grep -qF '#include <trace/hooks/blk.h>' "$ns_file"; then
               sed -i '/#include <trace\/hooks\/blk\.h>/a #include <trace/hooks/fs.h>' "$ns_file"
@@ -1596,41 +1596,41 @@ runs:
               sed -i '1i#include <trace/hooks/fs.h>' "$ns_file"
             fi
           fi
-    
+
           if ! grep -qF 'susfs_is_sdcard_android_data_not_decrypted' "$ns_file"; then
             if grep -qF '/* Maximum number of mounts in a mount namespace */' "$ns_file"; then
               sed -i '/\/\* Maximum number of mounts in a mount namespace \*\//i\
-              #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-              extern bool susfs_is_current_ksu_domain(void);\
-              extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\
-              \
-              #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\
-              \
-              #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-              ' "$ns_file"
+        #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+        extern bool susfs_is_current_ksu_domain(void);\
+        extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\
+        \
+        #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\
+        \
+        #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+        ' "$ns_file"
             else
               echo "::error::Cannot find mount_max anchor in fs/namespace.c"
               return 1
             fi
           fi
-    
+
           echo "Manual namespace hunk repair completed"
-    
+
           echo "Verifying namespace repair markers..."
           grep -nF '#include <linux/susfs_def.h>' "$ns_file" || return 1
           grep -nF '#include <trace/hooks/fs.h>' "$ns_file" || return 1
           grep -nF 'susfs_is_current_ksu_domain' "$ns_file" || return 1
           grep -nF 'susfs_is_sdcard_android_data_not_decrypted' "$ns_file" || return 1
           grep -nF 'CL_COPY_MNT_NS' "$ns_file" || return 1
-    
+
           return 0
         }
-    
+
         if [ "$KMI" = "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
           echo "Fixing bugs caused by kernel versions 5.15.0~5.15.123 only supporting the legacy C library"
-    
+
           LEGACY_PATCH="$GITHUB_WORKSPACE/action-source/patches/fix_5.15.legacy"
-    
+
           if [ -f "$LEGACY_PATCH" ]; then
             cp "$LEGACY_PATCH" ./fix_5.15.legacy.patch
             patch -p1 < fix_5.15.legacy.patch
@@ -1639,10 +1639,10 @@ runs:
             echo "::warning::Legacy 5.15 patch not found: $LEGACY_PATCH"
           fi
         fi
-    
+
         if [[ "${KERNEL_VER}" == "6.6" && "${TKERNEL_VER##*.}" -le 30 ]]; then
           TRUSTY_EXISTS="false"
-    
+
           if [ -f "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}" ] && grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}"; then
             TRUSTY_EXISTS="true"
           elif [ -f "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml" ] && grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml"; then
@@ -1650,7 +1650,7 @@ runs:
           elif [ -d "$KERNEL_PLATFORM_FOLDER/common-modules/trusty" ] || [ -d "$KERNEL_PLATFORM_FOLDER/trusty" ]; then
             TRUSTY_EXISTS="true"
           fi
-    
+
           if [[ "$TRUSTY_EXISTS" == "false" ]]; then
             echo "TrustyOS not found for $KMI / $TKERNEL_VER."
             echo "Keeping SUSFS patch structurally intact. Namespace hunk repair will handle known include-layout mismatch if needed."
@@ -1658,69 +1658,69 @@ runs:
             echo "TrustyOS detected; no SUSFS Trusty workaround needed."
           fi
         fi
-    
+
         fake_patched=0
         fake_patched_dist=0
         fake_patched_swap=0
         fake_patched_ns=0
         fake_patched_expand=0
-    
+
         if [ "$KMI" = "android15-6.6" ]; then
           if [ -f "./fs/proc/task_mmu.c" ] && ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
             echo "nr_subpages not found, applying patch compatibility fix"
-    
+
             sed -i \
               -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
               -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' \
               ./fs/proc/task_mmu.c
-    
+
             fake_patched=1
           fi
-    
+
           if [ -f "./fs/proc/base.c" ] && ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
             echo "#include <linux/dma-buf.h> not found, adding missing header file"
             sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
           fi
-    
+
           if [ -f "./mm/memory.c" ] && ! grep -qxF '#include <linux/zswap.h>' ./mm/memory.c; then
             echo "#include <linux/zswap.h> not found, adding missing header file"
             sed -i '/#include <linux\/sched\/sysctl\.h>/a #include <linux\/zswap.h>' ./mm/memory.c
             fake_patched_swap=1
           fi
-    
+
           if [ -f "./fs/namespace.c" ] && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
             echo "trace/hooks/fs.h not present before SUSFS patch; leaving namespace.c unchanged so patch context remains valid"
             fake_patched_ns=0
           fi
-    
+
           if [ -f "./fs/proc/task_mmu.c" ] && grep -qF 'if (vma->vm_end > last_vma_end)' ./fs/proc/task_mmu.c && ! grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
             echo "Temporarily expanding the last_vma_end if block to fix matching issues"
-    
+
             perl -i -0pe 's/\t\t\tif \(vma->vm_end > last_vma_end\)\n\t\t\t\tsmap_gather_stats\(vma, &mss, last_vma_end\);/\t\t\tif (vma->vm_end > last_vma_end) {\n\t\t\t\tsmap_gather_stats(vma, \&mss, last_vma_end);\n\t\t\t\tlast_vma_end = vma->vm_end;\n\t\t\t}/' ./fs/proc/task_mmu.c
-    
+
             fake_patched_expand=1
           fi
         fi
-    
+
         if [ "$KMI" = "android14-6.1" ]; then
           if [ -f "./fs/proc/task_mmu.c" ] && ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
             echo "vma_pages not found, applying patch compatibility fix"
             fake_patched=1
           fi
-    
+
           if [ -f "./fs/proc/base.c" ] && ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
             echo "#include <linux/dma-buf.h> not found, adding missing header file"
             sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
           fi
         fi
-    
+
         if [ "$KMI" = "android12-5.10" ] || [ "$KMI" = "android13-5.15" ]; then
           if [ -f "./fs/proc/task_mmu.c" ] && ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
             echo "vma_pages not found, applying patch compatibility fix"
             fake_patched=1
           fi
         fi
-    
+
         if [ "$KMI" = "android13-5.15" ]; then
           if [ -f "./mm/memory.c" ] && grep -qxF '#include <linux/swap_slots.h>' ./mm/memory.c && ! grep -qxF '#include <linux/susfs_def.h>' ./mm/memory.c; then
             echo "Found swap_slots.h interfering with detection, temporarily removing it"
@@ -1728,45 +1728,47 @@ runs:
             fake_patched_dist=1
           fi
         fi
-    
+
         echo "Applying SUSFS patch"
-    
+
         SUSFS_PATCH="50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
-    
+
         if [ ! -f "$SUSFS_PATCH" ]; then
           echo "::error::SUSFS patch not found: $COMMON_KERNEL_FOLDER/$SUSFS_PATCH"
           echo "Available patches:"
           find "$COMMON_KERNEL_FOLDER" -maxdepth 1 -type f -name '*.patch' -print || true
           exit 1
         fi
-    
+
         echo "Validating SUSFS patch structure before applying"
-    
+
         if ! grep -q '^diff --git ' "$SUSFS_PATCH"; then
           echo "Notice: SUSFS patch does not contain diff --git headers. It may still be a valid plain unified diff."
         fi
-    
-        if grep -n '^@@ ' "$SUSFS_PATCH" | head -n 5; then
+
+        if grep -q '^@@ ' "$SUSFS_PATCH"; then
           echo "SUSFS patch contains unified diff hunks."
+          echo "First SUSFS patch hunks:"
+          awk '/^@@ / { print NR ":" $0; count++; if (count >= 5) exit }' "$SUSFS_PATCH"
         else
           echo "::error::SUSFS patch contains no unified diff hunks: $SUSFS_PATCH"
           exit 1
         fi
-    
+
         PATCH_LOG="/tmp/susfs_patch_${OP_MODEL}_${KERNEL_FULL_VER}.log"
-    
+
         if patch -p1 --forward --verbose < "$SUSFS_PATCH" 2>&1 | tee "$PATCH_LOG"; then
           echo "SUSFS patch applied"
           SUSFS_PATCH_APPLIED=true
         else
           echo "::warning::SUSFS patch command failed"
-    
+
           echo "::group::SUSFS patch failure log"
           tail -n 180 "$PATCH_LOG" || true
           echo "::endgroup::"
-    
+
           REJECT_FILES="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true)"
-    
+
           if [ -n "$REJECT_FILES" ]; then
             echo "::group::Reject files found after SUSFS patching"
             while IFS= read -r rej; do
@@ -1778,10 +1780,10 @@ runs:
           else
             echo "No .rej files were produced."
           fi
-    
+
           if [ "$KMI" = "android15-6.6" ] && [ -f "./fs/namespace.c.rej" ]; then
             echo "::warning::Detected fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
-    
+
             if repair_namespace_hunk1; then
               rm -f "./fs/namespace.c.rej" "./fs/namespace.c.orig"
               SUSFS_PATCH_APPLIED=true
@@ -1795,14 +1797,14 @@ runs:
             exit 1
           fi
         fi
-    
+
         if [ "$SUSFS_PATCH_APPLIED" != "true" ]; then
           echo "::error::SUSFS patch was not successfully applied"
           exit 1
         fi
-    
+
         echo "susfs_patch completed"
-    
+
         if [ "$fake_patched" = 1 ]; then
           if [ "$KMI" = "android15-6.6" ]; then
             if [ -f "./fs/proc/task_mmu.c" ] && grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
@@ -1812,14 +1814,14 @@ runs:
                 ./fs/proc/task_mmu.c
             fi
           fi
-    
+
           if [ "$KMI" = "android12-5.10" ] || [ "$KMI" = "android13-5.15" ] || [ "$KMI" = "android14-6.1" ]; then
             if [ -f "./fs/proc/task_mmu.c" ] && grep -q 'goto[[:space:]]\+show_pad;' ./fs/proc/task_mmu.c; then
               sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
             fi
           fi
         fi
-    
+
         if [ "$fake_patched_dist" = 1 ]; then
           if [ "$KMI" = "android13-5.15" ]; then
             if [ -f "./mm/memory.c" ] && ! grep -qxF '#include <linux/swap_slots.h>' ./mm/memory.c; then
@@ -1827,7 +1829,7 @@ runs:
             fi
           fi
         fi
-    
+
         if [ "$fake_patched_swap" = 1 ]; then
           if [ "$KMI" = "android15-6.6" ]; then
             if [ -f "./mm/memory.c" ] && grep -qxF '#include <linux/zswap.h>' ./mm/memory.c; then
@@ -1835,11 +1837,11 @@ runs:
             fi
           fi
         fi
-    
+
         if [ "$fake_patched_ns" = 1 ]; then
           echo "Notice: fake_patched_ns cleanup requested, but namespace prepatching is disabled for patch safety."
         fi
-    
+
         if [ "$fake_patched_expand" = 1 ]; then
           if [ "$KMI" = "android15-6.6" ]; then
             if [ -f "./fs/proc/task_mmu.c" ] && grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
@@ -1847,11 +1849,11 @@ runs:
             fi
           fi
         fi
-    
+
         echo "Checking for reject files"
-    
+
         REJECT_FILES="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true)"
-    
+
         if [ -n "$REJECT_FILES" ]; then
           echo "::error::Reject files found after SUSFS patching:"
           while IFS= read -r rej; do
@@ -1861,26 +1863,26 @@ runs:
           done <<< "$REJECT_FILES"
           exit 1
         fi
-    
+
         echo "Enabling SUSFS defconfig options"
-    
+
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-    
+
         mkdir -p "$(dirname "$DEFCONFIG")"
         touch "$DEFCONFIG"
-    
+
         set_config() {
           local key="$1"
           local val="$2"
           local line="${key}=${val}"
-    
+
           if grep -qE "^${key}=|^# ${key} is not set" "$DEFCONFIG"; then
             sed -i -E "s|^${key}=.*|${line}|; s|^# ${key} is not set|${line}|" "$DEFCONFIG"
           else
             printf '%s\n' "$line" >> "$DEFCONFIG"
           fi
         }
-    
+
         set_config CONFIG_KSU_SUSFS y
         set_config CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT y
         set_config CONFIG_KSU_SUSFS_SUS_PATH y
@@ -1898,18 +1900,18 @@ runs:
         set_config CONFIG_KSU_SUSFS_OPEN_REDIRECT y
         set_config CONFIG_KSU_SUSFS_SUS_MAP y
         set_config CONFIG_KSU_SUSFS_SUS_SU n
-    
+
         echo "SUSFS defconfig entries:"
         grep -nE '^CONFIG_KSU_SUSFS' "$DEFCONFIG" || true
-    
+
         SUSVER_FINAL="${SUSVER:-unknown}"
-    
+
         for f in \
           "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" \
           "$COMMON_KERNEL_FOLDER/include/linux/susfs_def.h" \
           "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" \
           "$SUSFS_FOLDER/kernel_patches/include/linux/susfs_def.h"; do
-    
+
           if [ -f "$f" ]; then
             found="$(
               grep -E 'SUSFS_VERSION|SUSFS_VERSION_STR|SUSFS_VER' "$f" 2>/dev/null \
@@ -1918,25 +1920,25 @@ runs:
                 | tr -d '"' \
                 || true
             )"
-    
+
             if [ -n "$found" ]; then
               SUSVER_FINAL="$found"
               break
             fi
           fi
         done
-    
+
         echo "Detected SUSFS version: $SUSVER_FINAL"
-    
+
         {
           echo "SUSVER=$SUSVER_FINAL"
           echo "SUSFS_PATCH_APPLIED=true"
         } >> "$GITHUB_ENV"
-    
+
         if [ -f "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" ]; then
           echo "$SUSVER_FINAL" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         fi
-    
+
         echo "✅ SukiSU Ultra patch step completed"
         echo "::endgroup::"
     
