@@ -1666,13 +1666,15 @@ runs:
             TRUSTY_EXISTS="true"
           elif [ -f "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml" ] && grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml"; then
             TRUSTY_EXISTS="true"
+          elif [ -d "$KERNEL_PLATFORM_FOLDER/common-modules/trusty" ] || [ -d "$KERNEL_PLATFORM_FOLDER/trusty" ]; then
+            TRUSTY_EXISTS="true"
           fi
     
           if [[ "$TRUSTY_EXISTS" == "false" ]]; then
-            echo "Fixing SUSFS errors caused by missing TrustyOS in the source code and manifest for kernel versions 6.6.0~6.6.30"
-    
-            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' "50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch" || true
-            sed -i '/#include <trace\/hooks\/fs.h>/d' "50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch" || true
+            echo "TrustyOS not found for $KMI / $TKERNEL_VER."
+            echo "Keeping SUSFS patch structurally intact. Runtime source adjustments will be handled after patching if needed."
+          else
+            echo "TrustyOS detected; no SUSFS Trusty workaround needed."
           fi
         fi
     
@@ -1707,9 +1709,8 @@ runs:
             fi
     
             if [ -f "./fs/namespace.c" ] && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
-              echo "#include <trace/hooks/fs.h> not found, adding missing header file"
-              sed -i '/#include <trace\/hooks\/blk\.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
-              fake_patched_ns=1
+              echo "trace/hooks/fs.h not present before SUSFS patch; leaving namespace.c unchanged so patch context remains valid"
+              fake_patched_ns=0
             fi
     
             if [ -f "./fs/proc/task_mmu.c" ] && grep -qF 'if (vma->vm_end > last_vma_end)' ./fs/proc/task_mmu.c && ! grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
@@ -1759,10 +1760,20 @@ runs:
             exit 1
           fi
     
-          if patch -p1 --forward < "$SUSFS_PATCH"; then
+          PATCH_LOG="/tmp/susfs_patch_${OP_MODEL}_${KERNEL_FULL_VER}.log"
+    
+          if patch -p1 --forward --verbose < "$SUSFS_PATCH" 2>&1 | tee "$PATCH_LOG"; then
             echo "SUSFS patch applied"
           else
-            echo "::warning::SUSFS patch command failed, checking reject files"
+            echo "::error::SUSFS patch command failed"
+    
+            echo "::group::SUSFS patch failure log"
+            tail -n 160 "$PATCH_LOG" || true
+            echo "::endgroup::"
+    
+            echo "::group::Patch context around malformed area if available"
+            nl -ba "$SUSFS_PATCH" | sed -n '390,455p' || true
+            echo "::endgroup::"
     
             REJECT_FILES="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true)"
     
@@ -1773,10 +1784,10 @@ runs:
                 cat "$rej"
                 echo "::endgroup::"
               done <<< "$REJECT_FILES"
-              exit 1
+            else
+              echo "No .rej files were produced. This usually means the patch file itself is malformed or patch parsing stopped before writing rejects."
             fi
     
-            echo "::error::SUSFS patch failed without reject files"
             exit 1
           fi
     
@@ -1816,9 +1827,7 @@ runs:
           fi
     
           if [ "$fake_patched_ns" = 1 ]; then
-            if [ -f "./fs/namespace.c" ] && grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
-              sed -i '/#include <trace\/hooks\/fs\.h>/d' ./fs/namespace.c
-            fi
+            echo "Notice: fake_patched_ns cleanup requested, but namespace prepatching is disabled for patch safety."
           fi
     
           if [ "$fake_patched_expand" = 1 ]; then
