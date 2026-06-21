@@ -1782,8 +1782,10 @@ runs:
             fake_patched_ns=0
           fi
 
-          # ✅ FIX #4 — Échapper & dans la partie remplacement Perl (rhs de s///)
-          if [ -f "./fs/proc/task_mmu.c" ] && grep -qF 'if (vma->vm_end > last_vma_end)' ./fs/proc/task_mmu.c && ! grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
+          if [ -f "./fs/proc/task_mmu.c" ] \
+            && grep -qF 'if (vma->vm_end > last_vma_end)' ./fs/proc/task_mmu.c \
+            && ! grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
+
             echo "Temporarily expanding the last_vma_end if block to fix matching issues"
 
             perl -i -0pe \
@@ -1814,7 +1816,10 @@ runs:
         fi
 
         if [ "$KMI" = "android13-5.15" ]; then
-          if [ -f "./mm/memory.c" ] && grep -qxF '#include <linux/swap_slots.h>' ./mm/memory.c && ! grep -qxF '#include <linux/susfs_def.h>' ./mm/memory.c; then
+          if [ -f "./mm/memory.c" ] \
+            && grep -qxF '#include <linux/swap_slots.h>' ./mm/memory.c \
+            && ! grep -qxF '#include <linux/susfs_def.h>' ./mm/memory.c; then
+
             echo "Found swap_slots.h interfering with detection, temporarily removing it"
             sed -i '/#include <linux\/swap_slots\.h>/d' ./mm/memory.c
             fake_patched_dist=1
@@ -1848,31 +1853,16 @@ runs:
 
         PATCH_LOG="/tmp/susfs_patch_${OP_MODEL}_${KERNEL_FULL_VER}.log"
 
-        if patch -p1 --forward --verbose < "$SUSFS_PATCH" 2>&1 | tee "$PATCH_LOG"; then
+        if patch -p1 --forward --verbose < "$SUSFS_PATCH" > "$PATCH_LOG" 2>&1; then
           echo "SUSFS patch applied cleanly"
           echo "SUSFS_PATCH_STATUS=clean" >> "$GITHUB_ENV"
           SUSFS_PATCH_APPLIED=true
         else
           PATCH_EXIT_CODE=$?
 
-          echo "Notice: SUSFS patch command returned non-zero. Checking for recoverable namespace.c-only reject."
-
-          echo "::group::SUSFS patch non-zero log"
-          tail -n 180 "$PATCH_LOG" || true
-          echo "::endgroup::"
+          echo "SUSFS patch did not apply fully. Checking for recoverable namespace.c-only reject."
 
           REJECT_FILES="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true)"
-
-          if [ -n "$REJECT_FILES" ]; then
-            echo "::group::Reject files found after SUSFS patching"
-            while IFS= read -r rej; do
-              echo "----- Reject file: $rej -----"
-              cat "$rej"
-              echo ""
-            done <<< "$REJECT_FILES"
-            echo "::endgroup::"
-          fi
-
           REJECT_COUNT="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print 2>/dev/null | wc -l | tr -d ' ')"
 
           NAMESPACE_REJECT_BY_FILE=false
@@ -1903,7 +1893,7 @@ runs:
             && { [ "$NAMESPACE_REJECT_BY_FILE" = "true" ] || [ "$NAMESPACE_REJECT_BY_LOG" = "true" ]; } \
             && [ "$OTHER_REJECT_BY_LOG" = "false" ]; then
 
-            echo "Notice: Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
+            echo "Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
 
             if repair_namespace_hunk1; then
               rm -f "./fs/namespace.c.rej" "./fs/namespace.c.orig"
@@ -1913,13 +1903,32 @@ runs:
             else
               echo "SUSFS_PATCH_STATUS=failed_namespace_repair" >> "$GITHUB_ENV"
               echo "::error::SUSFS patch failed: manual namespace repair failed"
+
+              echo "::group::SUSFS patch log"
+              tail -n 180 "$PATCH_LOG" || true
+              echo "::endgroup::"
+
               exit "$PATCH_EXIT_CODE"
             fi
           else
             echo "SUSFS_PATCH_STATUS=failed_unrecoverable" >> "$GITHUB_ENV"
             echo "::error::SUSFS patch failed and is not eligible for namespace-only repair"
             echo "Reject count: $REJECT_COUNT"
-            find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true
+
+            if [ -n "$REJECT_FILES" ]; then
+              echo "::group::Reject files"
+              while IFS= read -r rej; do
+                echo "----- Reject file: $rej -----"
+                cat "$rej"
+                echo ""
+              done <<< "$REJECT_FILES"
+              echo "::endgroup::"
+            fi
+
+            echo "::group::SUSFS patch log"
+            tail -n 180 "$PATCH_LOG" || true
+            echo "::endgroup::"
+
             grep -nE 'FAILED|saving rejects|\.rej|malformed|cannot find|Skipping patch' "$PATCH_LOG" || true
             exit "$PATCH_EXIT_CODE"
           fi
@@ -1969,7 +1978,6 @@ runs:
           echo "Notice: fake_patched_ns cleanup requested, but namespace prepatching is disabled for patch safety."
         fi
 
-        # ✅ FIX #4 — Rollback du expand également avec & correctement échappé
         if [ "$fake_patched_expand" = 1 ]; then
           if [ "$KMI" = "android15-6.6" ]; then
             if [ -f "./fs/proc/task_mmu.c" ] && grep -qF 'if (vma->vm_end > last_vma_end) {' ./fs/proc/task_mmu.c; then
