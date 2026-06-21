@@ -1570,10 +1570,10 @@ runs:
             echo "✅ Supported SUSFS version: $SUSVER"
             ;;
           unknown)
-            echo "::warning::Could not detect SUSFS version. Continuing because patch file exists."
+            echo "Warning: Could not detect SUSFS version. Continuing because patch file exists."
             ;;
           *)
-            echo "::warning::Untested SUSFS version: $SUSVER"
+            echo "Warning: Untested SUSFS version: $SUSVER"
             echo "Continuing, but patch compatibility is not guaranteed."
             ;;
         esac
@@ -1671,7 +1671,7 @@ runs:
             patch -p1 < fix_5.15.legacy.patch
             echo "fix_5.15_patch completed"
           else
-            echo "::warning::Legacy 5.15 patch not found: $LEGACY_PATCH"
+            echo "Warning: Legacy 5.15 patch not found: $LEGACY_PATCH"
           fi
         fi
 
@@ -1799,7 +1799,7 @@ runs:
         else
           PATCH_EXIT_CODE=$?
 
-          echo "::notice::SUSFS patch command returned non-zero. Checking whether this is a known recoverable namespace.c-only reject."
+          echo "Notice: SUSFS patch command returned non-zero. Checking whether this is a known recoverable namespace.c-only reject."
 
           echo "::group::SUSFS patch non-zero log"
           tail -n 180 "$PATCH_LOG" || true
@@ -1858,7 +1858,7 @@ runs:
             && { [ "$NAMESPACE_REJECT_BY_FILE" = "true" ] || [ "$NAMESPACE_REJECT_BY_LOG" = "true" ]; } \
             && [ "$OTHER_REJECT_BY_LOG" = "false" ]; then
 
-            echo "::notice::Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
+            echo "Notice: Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
 
             if repair_namespace_hunk1; then
               rm -f "./fs/namespace.c.rej" "./fs/namespace.c.orig"
