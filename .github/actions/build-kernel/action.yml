@@ -1816,12 +1816,38 @@ runs:
             done <<< "$REJECT_FILES"
             echo "::endgroup::"
           else
-            echo "No .rej files were produced."
+            echo "No .rej files were found by find(). Will also inspect patch log."
           fi
 
           REJECT_COUNT="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print 2>/dev/null | wc -l | tr -d ' ')"
 
-          if [ "$KMI" = "android15-6.6" ] && [ "$REJECT_COUNT" = "1" ] && [ -f "./fs/namespace.c.rej" ]; then
+          NAMESPACE_REJECT_BY_FILE=false
+          NAMESPACE_REJECT_BY_LOG=false
+          OTHER_REJECT_BY_LOG=false
+
+          if [ -f "./fs/namespace.c.rej" ]; then
+            NAMESPACE_REJECT_BY_FILE=true
+          fi
+
+          if grep -qF 'patching file fs/namespace.c' "$PATCH_LOG" \
+            && grep -qE 'Hunk #[0-9]+ FAILED at|saving rejects to file fs/namespace\.c\.rej' "$PATCH_LOG"; then
+            NAMESPACE_REJECT_BY_LOG=true
+          fi
+
+          if grep -qE 'saving rejects to file ' "$PATCH_LOG" \
+            && grep -vF 'saving rejects to file fs/namespace.c.rej' "$PATCH_LOG" >/dev/null 2>&1; then
+            OTHER_REJECT_BY_LOG=true
+          fi
+
+          echo "Reject count from filesystem: $REJECT_COUNT"
+          echo "Namespace reject by file: $NAMESPACE_REJECT_BY_FILE"
+          echo "Namespace reject by log: $NAMESPACE_REJECT_BY_LOG"
+          echo "Other reject by log: $OTHER_REJECT_BY_LOG"
+
+          if [ "$KMI" = "android15-6.6" ] \
+            && { [ "$NAMESPACE_REJECT_BY_FILE" = "true" ] || [ "$NAMESPACE_REJECT_BY_LOG" = "true" ]; } \
+            && [ "$OTHER_REJECT_BY_LOG" = "false" ]; then
+
             echo "::notice::Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
 
             if repair_namespace_hunk1; then
@@ -1840,6 +1866,9 @@ runs:
             echo "Reject count: $REJECT_COUNT"
             echo "Reject files:"
             find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true
+            echo ""
+            echo "Reject-related log lines:"
+            grep -nE 'FAILED|saving rejects|\.rej|malformed|cannot find|Skipping patch' "$PATCH_LOG" || true
             exit "$PATCH_EXIT_CODE"
           fi
         fi
