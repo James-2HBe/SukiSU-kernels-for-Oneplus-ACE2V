@@ -1834,8 +1834,13 @@ runs:
             NAMESPACE_REJECT_BY_LOG=true
           fi
 
-          if grep -qE 'saving rejects to file ' "$PATCH_LOG" \
-            && grep -vF 'saving rejects to file fs/namespace.c.rej' "$PATCH_LOG" >/dev/null 2>&1; then
+          OTHER_REJECT_LINES="$(
+            grep -E 'saving rejects to file ' "$PATCH_LOG" 2>/dev/null \
+              | grep -vF 'saving rejects to file fs/namespace.c.rej' \
+              || true
+          )"
+
+          if [ -n "$OTHER_REJECT_LINES" ]; then
             OTHER_REJECT_BY_LOG=true
           fi
 
@@ -1843,6 +1848,11 @@ runs:
           echo "Namespace reject by file: $NAMESPACE_REJECT_BY_FILE"
           echo "Namespace reject by log: $NAMESPACE_REJECT_BY_LOG"
           echo "Other reject by log: $OTHER_REJECT_BY_LOG"
+
+          if [ "$OTHER_REJECT_BY_LOG" = "true" ]; then
+            echo "Other reject lines detected:"
+            printf '%s\n' "$OTHER_REJECT_LINES"
+          fi
 
           if [ "$KMI" = "android15-6.6" ] \
             && { [ "$NAMESPACE_REJECT_BY_FILE" = "true" ] || [ "$NAMESPACE_REJECT_BY_LOG" = "true" ]; } \
