@@ -863,35 +863,69 @@ runs:
 
           rm -rf "$dir"
 
-          # First try as branch/tag.
-          if git clone --depth 1 --branch "$ref" "$url" "$dir"; then
-            echo "SUSFS cloned as branch/tag: $ref"
-            return 0
+          local max_attempts=4
+          local attempt=1
+
+          local is_sha=false
+          if [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            is_sha=true
+            echo "Requested SUSFS ref looks like a full commit SHA"
+          else
+            echo "Requested SUSFS ref looks like a branch or tag"
           fi
 
-          echo "Branch/tag clone failed. Trying generic clone + checkout..."
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "SUSFS clone attempt $attempt/$max_attempts"
 
-          rm -rf "$dir"
+            rm -rf "$dir"
 
-          if ! git clone --depth 1 "$url" "$dir"; then
-            echo "::error::Initial SUSFS clone failed"
-            return 1
-          fi
+            if [ "$is_sha" = false ]; then
+              echo "Trying SUSFS ref as branch/tag: $ref"
 
-          cd "$dir"
+              if git clone --filter=blob:none --single-branch --branch "$ref" "$url" "$dir"; then
+                echo "SUSFS cloned as branch/tag: $ref"
+                return 0
+              fi
 
-          # This supports commit SHA, tag, or remote ref when possible.
-          git fetch --depth 1 origin "$ref" || true
+              echo "Branch/tag clone failed. Trying generic clone + checkout..."
+              rm -rf "$dir"
+            fi
 
-          if git checkout "$ref"; then
-            cd "$GITHUB_WORKSPACE"
-            echo "SUSFS checked out ref: $ref"
-            return 0
-          fi
+            echo "Trying generic filtered clone for SUSFS"
 
-          cd "$GITHUB_WORKSPACE"
+            if git clone --filter=blob:none "$url" "$dir"; then
+              cd "$dir"
 
-          echo "::error::Failed to checkout SUSFS ref: $ref"
+              echo "Fetching requested SUSFS ref: $ref"
+              git fetch --filter=blob:none origin "$ref" || true
+
+              echo "Fetching SUSFS remote branches and tags for fallback checkout"
+              git fetch --filter=blob:none origin "+refs/heads/*:refs/remotes/origin/*" || true
+              git fetch --filter=blob:none origin "+refs/tags/*:refs/tags/*" || true
+
+              if git checkout "$ref"; then
+                cd "$GITHUB_WORKSPACE"
+                echo "SUSFS checked out ref: $ref"
+                return 0
+              fi
+
+              if git checkout "origin/$ref" 2>/dev/null; then
+                cd "$GITHUB_WORKSPACE"
+                echo "SUSFS checked out remote branch: origin/$ref"
+                return 0
+              fi
+
+              cd "$GITHUB_WORKSPACE"
+            fi
+
+            echo "SUSFS clone/checkout failed on attempt $attempt"
+            rm -rf "$dir" 2>/dev/null || true
+
+            sleep $((attempt * 8))
+            attempt=$((attempt + 1))
+          done
+
+          echo "::error::Failed to clone or checkout SUSFS ref after ${max_attempts} attempts: $ref"
           return 1
         }
 
@@ -913,8 +947,9 @@ runs:
 
           if [ ! -d "$SUSFS_FOLDER/kernel_patches" ]; then
             echo "::error::SUSFS folder was not cloned correctly: $SUSFS_FOLDER"
+            echo "Expected directory: $SUSFS_FOLDER/kernel_patches"
             echo "SUSFS folder contents:"
-            find "$SUSFS_FOLDER" -maxdepth 3 -type d -print || true
+            find "$SUSFS_FOLDER" -maxdepth 3 -print || true
             exit 1
           fi
 
@@ -1758,12 +1793,15 @@ runs:
         PATCH_LOG="/tmp/susfs_patch_${OP_MODEL}_${KERNEL_FULL_VER}.log"
 
         if patch -p1 --forward --verbose < "$SUSFS_PATCH" 2>&1 | tee "$PATCH_LOG"; then
-          echo "SUSFS patch applied"
+          echo "SUSFS patch applied cleanly"
+          echo "SUSFS_PATCH_STATUS=clean" >> "$GITHUB_ENV"
           SUSFS_PATCH_APPLIED=true
         else
-          echo "::warning::SUSFS patch command failed"
+          PATCH_EXIT_CODE=$?
 
-          echo "::group::SUSFS patch failure log"
+          echo "::notice::SUSFS patch command returned non-zero. Checking whether this is a known recoverable namespace.c-only reject."
+
+          echo "::group::SUSFS patch non-zero log"
           tail -n 180 "$PATCH_LOG" || true
           echo "::endgroup::"
 
@@ -1781,20 +1819,28 @@ runs:
             echo "No .rej files were produced."
           fi
 
-          if [ "$KMI" = "android15-6.6" ] && [ -f "./fs/namespace.c.rej" ]; then
-            echo "::warning::Detected fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
+          REJECT_COUNT="$(find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print 2>/dev/null | wc -l | tr -d ' ')"
+
+          if [ "$KMI" = "android15-6.6" ] && [ "$REJECT_COUNT" = "1" ] && [ -f "./fs/namespace.c.rej" ]; then
+            echo "::notice::Detected known fs/namespace.c reject on $KMI. Attempting manual namespace hunk repair."
 
             if repair_namespace_hunk1; then
               rm -f "./fs/namespace.c.rej" "./fs/namespace.c.orig"
               SUSFS_PATCH_APPLIED=true
-              echo "SUSFS patch accepted after manual namespace repair"
+              echo "SUSFS_PATCH_STATUS=recovered_namespace_repair" >> "$GITHUB_ENV"
+              echo "✅ SUSFS patch recovered after manual namespace repair"
             else
-              echo "::error::Manual namespace repair failed"
-              exit 1
+              echo "SUSFS_PATCH_STATUS=failed_namespace_repair" >> "$GITHUB_ENV"
+              echo "::error::SUSFS patch failed: manual namespace repair failed"
+              exit "$PATCH_EXIT_CODE"
             fi
           else
+            echo "SUSFS_PATCH_STATUS=failed_unrecoverable" >> "$GITHUB_ENV"
             echo "::error::SUSFS patch failed and is not eligible for namespace-only repair"
-            exit 1
+            echo "Reject count: $REJECT_COUNT"
+            echo "Reject files:"
+            find "$COMMON_KERNEL_FOLDER" -name '*.rej' -print || true
+            exit "$PATCH_EXIT_CODE"
           fi
         fi
 
