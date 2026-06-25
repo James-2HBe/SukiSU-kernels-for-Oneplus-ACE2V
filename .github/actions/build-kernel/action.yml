@@ -1181,7 +1181,7 @@ runs:
 
           local changed=0
 
-          if grep -q 'escape_to_root_for_init[[:space:]]*(' "$target"; then
+          if grep -qE 'escape_to_root_for_init[[:space:]]*\(' "$target"; then
             echo "Fixing escape_to_root_for_init API compatibility in: $target"
 
             if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
@@ -1198,7 +1198,7 @@ runs:
             fi
           fi
 
-          if grep -q 'escape_with_root_profile[[:space:]]*(' "$target"; then
+          if grep -qE 'escape_with_root_profile[[:space:]]*\(' "$target"; then
             echo "Fixing escape_with_root_profile API compatibility in: $target"
 
             if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
@@ -1223,10 +1223,23 @@ runs:
                 sed -i '1i#include "selinux/selinux.h"' "$target"
               fi
             fi
+
+            perl -0pi -e 's/(\bret\s*=\s*)escape_to_root_for_adb_root\s*\(\s*\)\s*;/escape_to_root_for_adb_root();\nret = 0;/g' "$target"
+            perl -0pi -e 's/return\s+escape_to_root_for_adb_root\s*\(\s*\)\s*;/escape_to_root_for_adb_root();\nreturn 0;/g' "$target"
           fi
 
           if grep -nE 'escape_to_root_for_init|escape_with_root_profile' "$target"; then
             echo "::error::Unsupported root escape API still remains in $target"
+            exit 1
+          fi
+
+          if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(' "$target"; then
+            echo "::error::void escape_to_root_for_adb_root() is still assigned to ret in $target"
+            exit 1
+          fi
+
+          if grep -nE 'return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' "$target"; then
+            echo "::error::void escape_to_root_for_adb_root() is still returned directly in $target"
             exit 1
           fi
         }
@@ -1680,11 +1693,21 @@ runs:
             echo "::error::Unsupported root escape API still exists in drivers/kernelsu/core/init.c"
             exit 1
           fi
+
+          if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(|return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' drivers/kernelsu/core/init.c; then
+            echo "::error::Invalid void escape_to_root_for_adb_root() usage still exists in drivers/kernelsu/core/init.c"
+            exit 1
+          fi
         fi
 
         if [ -f drivers/kernelsu/feature/sucompat.c ]; then
           if grep -nE 'escape_to_root_for_init|escape_with_root_profile' drivers/kernelsu/feature/sucompat.c; then
             echo "::error::Unsupported root escape API still exists in drivers/kernelsu/feature/sucompat.c"
+            exit 1
+          fi
+
+          if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(|return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' drivers/kernelsu/feature/sucompat.c; then
+            echo "::error::Invalid void escape_to_root_for_adb_root() usage still exists in drivers/kernelsu/feature/sucompat.c"
             exit 1
           fi
         fi
