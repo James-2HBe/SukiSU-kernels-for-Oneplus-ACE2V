@@ -1568,9 +1568,49 @@ runs:
             echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA"
           } >> "$GITHUB_ENV"
         fi
+        
+        retry_clone() {
+          local url="$1"
+          local branch="${2:-main}"
+          local depth="${3:-1}"
+          local dir="${4:-$(basename "$url" .git)}"
 
-        rm -rf SukiSU_patch
-        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          local max_attempts=3
+          local attempt=1
+          local clone_args=(--branch "$branch")
+
+          if [ "$depth" != "0" ] && [ -n "$depth" ]; then
+            clone_args+=(--depth "$depth")
+          fi
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Attempt $attempt/$max_attempts: cloning $url ($branch) into $dir"
+            rm -rf "$dir"
+
+            if git clone "${clone_args[@]}" "$url" "$dir"; then
+              echo "✅ Cloned: $url → $dir"
+              return 0
+            fi
+
+            rm -rf "$dir" 2>/dev/null || true
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
+
+          echo "::error::All clone attempts failed for $url"
+          return 1
+        }
+       
+        rm -rf "$CONFIG_FOLDER/SukiSU_patch"
+        retry_clone \
+          "https://github.com/ShirkNeko/SukiSU_patch.git" \
+          "main" "1" \
+          "$CONFIG_FOLDER/SukiSU_patch"
+
+        if [ ! -d "$CONFIG_FOLDER/SukiSU_patch" ]; then
+          echo "::error::SukiSU_patch clone failed"
+          exit 1
+        fi
 
         cd "$KERNEL_PLATFORM_FOLDER"
 
@@ -1586,13 +1626,15 @@ runs:
         fi
 
         cp "$SUSFS_SRC_PATCH" "$COMMON_KERNEL_FOLDER/"
-
+       
         if [ -d "$SUSFS_FOLDER/kernel_patches/fs" ]; then
-          cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/" || true
+          find "$SUSFS_FOLDER/kernel_patches/fs" -maxdepth 1 -type f \
+            -exec cp -f {} "$COMMON_KERNEL_FOLDER/fs/" \;
         fi
 
         if [ -d "$SUSFS_FOLDER/kernel_patches/include/linux" ]; then
-          cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
+          find "$SUSFS_FOLDER/kernel_patches/include/linux" -maxdepth 1 -type f \
+            -exec cp -f {} "$COMMON_KERNEL_FOLDER/include/linux/" \;
         fi
 
         SUSVER="unknown"
@@ -1777,7 +1819,9 @@ runs:
             fake_patched_swap=1
           fi
 
-          if [ -f "./fs/namespace.c" ] && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
+          if [ -f "./fs/namespace.c" ] \
+            && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c \
+            && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
             echo "trace/hooks/fs.h not present before SUSFS patch; leaving namespace.c unchanged"
             fake_patched_ns=0
           fi
@@ -3303,7 +3347,7 @@ runs:
         path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
         compression-level: 9
         retention-days: 90
-
+    
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v7
@@ -3313,6 +3357,19 @@ runs:
         archive: false
         compression-level: 0
         retention-days: 90
+
+    - name: Upload ccache log
+      if: ${{ success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log"
+        path: |
+          ${{ env.CCACHE_LOGFILE }}
+          ${{ github.workspace }}/${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log
+        archive: false
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: ignore    
 
     - name: 📥 Checkout Code
       uses: actions/checkout@v6
@@ -3326,13 +3383,14 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Normalize ccache before saving"
 
-        unset CCACHE_DEPEND || true
-        unset CCACHE_READONLY_DIRECT || true
-        unset CCACHE_COMPRESSION || true
-        unset CCACHE_COMPRESSION_LEVEL || true
-        unset CCACHE_FILE_CLONE || true
-        unset CCACHE_INODE_CACHE || true
+        unset CCACHE_DEPEND              || true
+        unset CCACHE_READONLY_DIRECT     || true
+        unset CCACHE_COMPRESSION         || true
+        unset CCACHE_COMPRESSION_LEVEL   || true
+        unset CCACHE_FILE_CLONE          || true
+        unset CCACHE_INODE_CACHE         || true
 
         {
           echo "CCACHE_COMPILERCHECK=content"
@@ -3346,18 +3404,34 @@ runs:
           echo "CCACHE_IGNOREOPTIONS=--sysroot*"
         } >> "$GITHUB_ENV"
 
+        if [ -d "${CCACHE_DIR:-}" ]; then
+          echo "ccache directory: $CCACHE_DIR"
+          echo "Size before cleanup:"
+          du -sh "$CCACHE_DIR" || true
+
+          ccache -c || true
+          ccache --evict-older-than 10800s || true
+
+          echo "Size after cleanup:"
+          du -sh "$CCACHE_DIR" || true
+        else
+          echo "No ccache directory found."
+        fi
+
+        echo "::endgroup::"
+
     - name: Save ccache cache
       if: ${{ always() && steps.build_kernel_step.conclusion == 'success' }}
       continue-on-error: true
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.CCACHE_DIR }}
-        cache_key: SUKISU-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
-        debug: ${{ inputs.debug }}
+        debug: true
         github_token: ${{ inputs.github_token }}
         working_dir: "./main-source"
-        compression_level: 6
+        compression_level: 3
 
     - name: Trim LTO LD cache before saving
       if: ${{ always() && env.OP_LTO != 'none' && steps.build_kernel_step.conclusion == 'success' }}
@@ -3365,18 +3439,23 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Trim LTO LD cache before saving"
 
-        if [ -d "$LDCACHE_DIR" ]; then
-          echo "LTO cache size before trim:"
+        if [ -d "${LDCACHE_DIR:-}" ]; then
+          echo "LTO cache directory: $LDCACHE_DIR"
+          echo "Size before trim:"
           du -sh "$LDCACHE_DIR" || true
 
           find "$LDCACHE_DIR" -type f -mmin +360 -delete || true
+          find "$LDCACHE_DIR" -type d -empty -delete     || true
 
-          echo "LTO cache size after trim:"
+          echo "Size after trim:"
           du -sh "$LDCACHE_DIR" || true
         else
-          echo "No LTO cache directory found"
+          echo "No LTO cache directory found."
         fi
+
+        echo "::endgroup::"
 
     - name: Save LTO LD cache
       if: ${{ always() && env.OP_LTO != 'none' && steps.build_kernel_step.conclusion == 'success' }}
@@ -3384,12 +3463,12 @@ runs:
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.LDCACHE_DIR }}
-        cache_key: SUKISU-v3-LTO-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        cache_key: ${{ inputs.ksu_type }}-v3-LTO-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "lto-cache"
-        debug: ${{ inputs.debug }}
+        debug: true
         github_token: ${{ inputs.github_token }}
         working_dir: "./main-source"
-        compression_level: 6
+        compression_level: 1
 
     - name: 🧹 Cleanup on failure
       if: ${{ failure() }}
