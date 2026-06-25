@@ -1270,6 +1270,108 @@ runs:
           done
         fi
 
+        echo "Synchronizing SukiSU local headers required by copied drivers/kernelsu sources"
+
+        for header in \
+          util.h \
+          klog.h \
+          arch.h \
+          sucompat.h \
+          ksud.h \
+          ksu.h \
+          allowlist.h \
+          app_profile.h \
+          manager.h \
+          apk_sign.h \
+          pkg_observer.h \
+          throne_tracker.h \
+          selinux.h \
+          sepolicy.h \
+          rules.h \
+          supercall.h \
+          dispatch.h \
+          perm.h; do
+
+          src="$(
+            find "$KERNEL_PLATFORM_FOLDER/KernelSU" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu" \
+              -type f \
+              -name "$header" \
+              2>/dev/null \
+              | head -n 1
+          )"
+
+          if [ -n "$src" ] && [ -f "$src" ]; then
+            echo "Found $header at: $src"
+
+            cp -f "$src" "$COMMON_KERNEL_FOLDER/drivers/kernelsu/$header" 2>/dev/null || true
+
+            for dest in \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/core" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/feature" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/hook" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/infra" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/manager" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/policy" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/runtime" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/selinux" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/sulog" \
+              "$COMMON_KERNEL_FOLDER/drivers/kernelsu/supercall"; do
+
+              if [ -d "$dest" ]; then
+                cp -f "$src" "$dest/$header" 2>/dev/null || true
+              fi
+            done
+          fi
+        done
+
+        if [ ! -f "$COMMON_KERNEL_FOLDER/drivers/kernelsu/infra/util.h" ] && \
+           [ ! -f "$COMMON_KERNEL_FOLDER/drivers/kernelsu/util.h" ]; then
+          echo "::error::util.h is still missing after header sync"
+          echo "Searching for util.h:"
+          find "$KERNEL_PLATFORM_FOLDER" "$COMMON_KERNEL_FOLDER" -type f -name 'util.h' 2>/dev/null || true
+          exit 1
+        fi
+
+        if [ -f "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" ]; then
+          grep -q 'srctree)/$(src)$' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/infra' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/infra' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/core' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/core' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/feature' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/feature' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/hook' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/hook' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/manager' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/manager' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/policy' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/policy' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/runtime' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/runtime' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/selinux' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/selinux' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+
+          grep -q 'srctree)/$(src)/supercall' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/supercall' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+        fi
+
+        echo "KernelSU header sync result:"
+        find "$COMMON_KERNEL_FOLDER/drivers/kernelsu" \
+          -maxdepth 3 \
+          -type f \
+          \( -name 'util.h' -o -name 'klog.h' -o -name 'arch.h' \) \
+          -print || true
+
         KSU_CRED_DEF='extern struct cred *ksu_cred;'
 
         while IFS= read -r f; do
@@ -1491,15 +1593,13 @@ runs:
         if [ "$ANDROID_VER_LOCAL" = "android16" ] && [ "$KERNEL_VER_LOCAL" = "6.12" ]; then
           SELINUXFS="$COMMON_KERNEL_FOLDER/security/selinux/selinuxfs.c"
 
-          if [ -f "$SELINUXFS" ] && [ -n "${SELINUXFS_BACKUP:-}" ] && [ -f "$SELINUXFS_BACKUP" ]; then
-            cp -a "$SELINUXFS_BACKUP" "$SELINUXFS"
-          elif [ -f "$SELINUXFS" ]; then
+          if [ -f "$SELINUXFS" ]; then
+            echo "Applying Android 16 / 6.12 SELinux compatibility cleanup"
+
+            # Do not restore selinuxfs.c wholesale here.
+            # Restoring it can undo valid SUSFS changes and reintroduce symbol drift.
             sed -i \
-              -e '/ksu_selinux_hide_enabled/d' \
-              -e '/fake_status/d' \
-              -e '/initialize_fake_status/d' \
               -e '/fake_status_initialize_key/d' \
-              -e 's/my_sel_open_handle_status/sel_open_handle_status/g' \
               "$SELINUXFS" || true
           fi
         fi
