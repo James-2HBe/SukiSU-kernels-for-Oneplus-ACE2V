@@ -1809,6 +1809,79 @@ runs:
         source "$REJ_CHECKER"
         check_rejects .
 
+        echo "Ensuring SUSFS Kconfig symbols are visible to olddefconfig"
+
+        KSU_KCONFIG="drivers/kernelsu/Kconfig"
+        SUSFS_KCONFIG="drivers/kernelsu/Kconfig.susfs"
+
+        if [ ! -f "$KSU_KCONFIG" ]; then
+          echo "::error::KernelSU Kconfig not found at $COMMON_KERNEL_FOLDER/$KSU_KCONFIG"
+          echo "Known KernelSU-related Kconfig files:"
+          find drivers -maxdepth 5 -type f -name 'Kconfig*' | grep -Ei 'kernelsu|ksu' || true
+          exit 1
+        fi
+
+        cat > "$SUSFS_KCONFIG" <<'EOF'
+        config KSU_SUSFS
+        	bool "KernelSU SUSFS support"
+        	depends on KSU
+        	default y
+        	help
+        	  Enable SUSFS integration for KernelSU/SukiSU.
+        
+        config KSU_SUSFS_SUS_PATH
+        	bool "SUSFS suspicious path support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_SUS_MAP
+        	bool "SUSFS suspicious map support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_SUS_MOUNT
+        	bool "SUSFS suspicious mount support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_SUS_KSTAT
+        	bool "SUSFS suspicious kstat support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_SPOOF_UNAME
+        	bool "SUSFS uname spoofing support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_ENABLE_LOG
+        	bool "SUSFS logging support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+        	bool "Hide KernelSU/SUSFS symbols"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+        	bool "SUSFS cmdline or bootconfig spoofing support"
+        	depends on KSU_SUSFS
+        	default y
+        
+        config KSU_SUSFS_OPEN_REDIRECT
+        	bool "SUSFS open redirect support"
+        	depends on KSU_SUSFS
+        	default y
+        EOF
+
+        if ! grep -q 'Kconfig.susfs' "$KSU_KCONFIG"; then
+          printf '\nsource "drivers/kernelsu/Kconfig.susfs"\n' >> "$KSU_KCONFIG"
+        fi
+
+        echo "SUSFS Kconfig visibility check:"
+        grep -nE 'Kconfig.susfs|config KSU_SUSFS|config KSU_SUSFS_OPEN_REDIRECT' "$KSU_KCONFIG" "$SUSFS_KCONFIG" || true
+
         echo "Enabling SUSFS defconfig options"
 
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
