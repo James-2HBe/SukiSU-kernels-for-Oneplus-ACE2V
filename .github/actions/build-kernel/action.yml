@@ -1244,6 +1244,61 @@ runs:
           fi
         }
 
+        fix_sukisu_app_profile_tif() {
+          local target="$1"
+
+          [ -f "$target" ] || return 0
+
+          if grep -q 'TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$target" && \
+             ! grep -q '#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$target"; then
+            echo "Adding fallback TIF_KSU_DISABLE_ESCAPE_WITH_ROOT definition in: $target"
+
+            awk '
+              BEGIN {
+                inserted = 0
+                in_include_block = 0
+              }
+
+              /^#include/ {
+                print
+                in_include_block = 1
+                next
+              }
+
+              in_include_block && !inserted {
+                print ""
+                print "#ifndef TIF_KSU_DISABLE_ESCAPE_WITH_ROOT"
+                print "#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT 31"
+                print "#endif"
+                print ""
+                inserted = 1
+                in_include_block = 0
+              }
+
+              {
+                print
+              }
+
+              END {
+                if (!inserted) {
+                  print ""
+                  print "#ifndef TIF_KSU_DISABLE_ESCAPE_WITH_ROOT"
+                  print "#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT 31"
+                  print "#endif"
+                }
+              }
+            ' "$target" > "$target.tmp"
+
+            mv "$target.tmp" "$target"
+          fi
+
+          if grep -q 'TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$target" && \
+             ! grep -q '#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$target"; then
+            echo "::error::TIF_KSU_DISABLE_ESCAPE_WITH_ROOT is still not defined in $target"
+            exit 1
+          fi
+        }
+
         cd "$KSU_FOLDER"
 
         patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
@@ -1276,6 +1331,7 @@ runs:
         fix_sukisu_selinux_hide_c "kernel/feature/selinux_hide.c"
         fix_sukisu_escape_to_root_api "kernel/core/init.c" "kernel"
         fix_sukisu_escape_to_root_api "kernel/feature/sucompat.c" "kernel"
+        fix_sukisu_app_profile_tif "kernel/policy/app_profile.c"
         fix_sukisu_linker_symbols
 
         cd "$COMMON_KERNEL_FOLDER"
@@ -1311,6 +1367,7 @@ runs:
         fix_sukisu_selinux_hide_c "drivers/kernelsu/feature/selinux_hide.c"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
+        fix_sukisu_app_profile_tif "drivers/kernelsu/policy/app_profile.c"
         fix_sukisu_linker_symbols
 
         mkdir -p drivers/kernelsu/kpm/uapi include/uapi
@@ -1680,6 +1737,7 @@ runs:
         fix_sukisu_linker_symbols
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
+        fix_sukisu_app_profile_tif "drivers/kernelsu/policy/app_profile.c"
 
         echo "Running final SukiSU targeted safety sweep..."
 
@@ -1708,6 +1766,14 @@ runs:
 
           if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(|return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' drivers/kernelsu/feature/sucompat.c; then
             echo "::error::Invalid void escape_to_root_for_adb_root() usage still exists in drivers/kernelsu/feature/sucompat.c"
+            exit 1
+          fi
+        fi
+
+        if [ -f drivers/kernelsu/policy/app_profile.c ]; then
+          if grep -q 'TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' drivers/kernelsu/policy/app_profile.c && \
+             ! grep -q '#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' drivers/kernelsu/policy/app_profile.c; then
+            echo "::error::TIF_KSU_DISABLE_ESCAPE_WITH_ROOT fallback missing in drivers/kernelsu/policy/app_profile.c"
             exit 1
           fi
         fi
