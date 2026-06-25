@@ -1952,7 +1952,7 @@ runs:
         echo "✅ SukiSU Ultra SUSFS patch step completed"
         echo "::endgroup::"
 
-        - name: Add SukiSU SUSFS legacy symbol shim
+    - name: Add SukiSU SUSFS legacy symbol shim
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
       run: |
