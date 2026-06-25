@@ -948,7 +948,6 @@ runs:
         } >> "$GITHUB_ENV"
 
         echo "$susfs_version" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-
         echo "SusFS Version: $susfs_version"
 
         if [ "$susfs_version" != "v2.2.0" ]; then
@@ -1148,6 +1147,7 @@ runs:
             if [ -f "$target" ]; then
               perl -0pi -e 's/return[ \t]+ksu_set_spoof_version[ \t]*\([^;]*\);/return -EINVAL;/g' "$target"
               perl -0pi -e 's/^[ \t]*ksu_set_spoof_version[ \t]*\([^;]*\);[ \t]*$/return -EINVAL;/mg' "$target"
+              sed -i '/^#define KERNEL_SU_VERSION[[:space:]]/d' "$target" || true
             fi
           done
 
@@ -1185,15 +1185,11 @@ runs:
             echo "Fixing escape_to_root_for_init API compatibility in: $target"
 
             if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
-              sed -i \
-                's/escape_to_root_for_init[[:space:]]*()/escape_to_root_for_adb_root()/g' \
-                "$target"
+              perl -0pi -e 's/escape_to_root_for_init[ \t]*\([ \t]*\)/escape_to_root_for_adb_root()/g' "$target"
               changed=1
             else
               echo "::warning::escape_to_root_for_adb_root was not found; forcing escape_to_root_for_init callers to success in $target"
-              sed -i \
-                's/escape_to_root_for_init[[:space:]]*()/0/g' \
-                "$target"
+              perl -0pi -e 's/escape_to_root_for_init[ \t]*\([ \t]*\)/0/g' "$target"
               changed=1
             fi
           fi
@@ -1202,15 +1198,11 @@ runs:
             echo "Fixing escape_with_root_profile API compatibility in: $target"
 
             if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
-              sed -i \
-                's/escape_with_root_profile[[:space:]]*()/escape_to_root_for_adb_root()/g' \
-                "$target"
+              perl -0pi -e 's/escape_with_root_profile[ \t]*\([ \t]*\)/escape_to_root_for_adb_root()/g' "$target"
               changed=1
             else
               echo "::warning::escape_to_root_for_adb_root was not found; forcing escape_with_root_profile callers to success in $target"
-              sed -i \
-                's/escape_with_root_profile[[:space:]]*()/0/g' \
-                "$target"
+              perl -0pi -e 's/escape_with_root_profile[ \t]*\([ \t]*\)/0/g' "$target"
               changed=1
             fi
           fi
@@ -1329,9 +1321,15 @@ runs:
         fix_sukisu_boot_event_c "kernel/runtime/boot_event.c"
         fix_sukisu_ksud_integration_c "kernel/runtime/ksud_integration.c"
         fix_sukisu_selinux_hide_c "kernel/feature/selinux_hide.c"
+
         fix_sukisu_escape_to_root_api "kernel/core/init.c" "kernel"
         fix_sukisu_escape_to_root_api "kernel/feature/sucompat.c" "kernel"
+        fix_sukisu_escape_to_root_api "kernel/supercall/dispatch.c" "kernel"
+        fix_sukisu_escape_to_root_api "kernel/feature/adb_root.c" "kernel"
+
         fix_sukisu_app_profile_tif "kernel/policy/app_profile.c"
+        fix_sukisu_app_profile_tif "kernel/supercall/dispatch.c"
+
         fix_sukisu_linker_symbols
 
         cd "$COMMON_KERNEL_FOLDER"
@@ -1365,9 +1363,15 @@ runs:
         fix_sukisu_boot_event_c "drivers/kernelsu/runtime/boot_event.c"
         fix_sukisu_ksud_integration_c "drivers/kernelsu/runtime/ksud_integration.c"
         fix_sukisu_selinux_hide_c "drivers/kernelsu/feature/selinux_hide.c"
+
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/supercall/dispatch.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/adb_root.c" "drivers/kernelsu"
+
         fix_sukisu_app_profile_tif "drivers/kernelsu/policy/app_profile.c"
+        fix_sukisu_app_profile_tif "drivers/kernelsu/supercall/dispatch.c"
+
         fix_sukisu_linker_symbols
 
         mkdir -p drivers/kernelsu/kpm/uapi include/uapi
@@ -1466,35 +1470,29 @@ runs:
         fi
 
         if [ -f "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" ]; then
-          grep -q 'srctree)/$(src)$' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+          for incdir in \
+            "" \
+            "infra" \
+            "core" \
+            "feature" \
+            "hook" \
+            "manager" \
+            "policy" \
+            "runtime" \
+            "selinux" \
+            "supercall"; do
 
-          grep -q 'srctree)/$(src)/infra' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/infra' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+            if [ -z "$incdir" ]; then
+              pattern='srctree)/$(src)$'
+              line='ccflags-y += -I$(srctree)/$(src)'
+            else
+              pattern="srctree)/\$(src)/$incdir"
+              line="ccflags-y += -I\$(srctree)/\$(src)/$incdir"
+            fi
 
-          grep -q 'srctree)/$(src)/core' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/core' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/feature' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/feature' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/hook' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/hook' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/manager' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/manager' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/policy' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/policy' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/runtime' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/runtime' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/selinux' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/selinux' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
-
-          grep -q 'srctree)/$(src)/supercall' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
-            sed -i '1i\ccflags-y += -I$(srctree)/$(src)/supercall' "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+            grep -q "$pattern" "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild" || \
+              sed -i "1i\\$line" "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"
+          done
         fi
 
         echo "KernelSU header sync result:"
@@ -1516,9 +1514,8 @@ runs:
           fi
         fi
 
-        if grep -q "KERNEL_SU_VERSION" drivers/kernelsu/supercall/dispatch.c 2>/dev/null; then
-          grep -q "#define KERNEL_SU_VERSION" drivers/kernelsu/supercall/dispatch.c || \
-            sed -i "1i\\#ifndef KERNEL_SU_VERSION\n#define KERNEL_SU_VERSION ${KSUVER:-40787}\n#endif" drivers/kernelsu/supercall/dispatch.c
+        if [ -f drivers/kernelsu/supercall/dispatch.c ]; then
+          sed -i '/^#define KERNEL_SU_VERSION[[:space:]]/d' drivers/kernelsu/supercall/dispatch.c || true
         fi
 
         if [ -f drivers/kernelsu/runtime/ksud.c ]; then
@@ -1672,7 +1669,6 @@ runs:
               absolute_end = start + match.end()
 
               new_text = text[:absolute_start] + replacement + text[absolute_end:]
-
               path.write_text(new_text)
 
               print("✅ Applied SUSFS show_smaps_rollup fallback patch")
@@ -1735,9 +1731,14 @@ runs:
         fi
 
         fix_sukisu_linker_symbols
+
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/supercall/dispatch.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/adb_root.c" "drivers/kernelsu"
+
         fix_sukisu_app_profile_tif "drivers/kernelsu/policy/app_profile.c"
+        fix_sukisu_app_profile_tif "drivers/kernelsu/supercall/dispatch.c"
 
         echo "Running final SukiSU targeted safety sweep..."
 
@@ -1758,25 +1759,34 @@ runs:
           fi
         fi
 
-        if [ -f drivers/kernelsu/feature/sucompat.c ]; then
-          if grep -nE 'escape_to_root_for_init|escape_with_root_profile' drivers/kernelsu/feature/sucompat.c; then
-            echo "::error::Unsupported root escape API still exists in drivers/kernelsu/feature/sucompat.c"
-            exit 1
-          fi
+        for root_api_file in \
+          drivers/kernelsu/feature/sucompat.c \
+          drivers/kernelsu/supercall/dispatch.c \
+          drivers/kernelsu/feature/adb_root.c; do
+          if [ -f "$root_api_file" ]; then
+            if grep -nE 'escape_to_root_for_init|escape_with_root_profile' "$root_api_file"; then
+              echo "::error::Unsupported root escape API still exists in $root_api_file"
+              exit 1
+            fi
 
-          if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(|return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' drivers/kernelsu/feature/sucompat.c; then
-            echo "::error::Invalid void escape_to_root_for_adb_root() usage still exists in drivers/kernelsu/feature/sucompat.c"
-            exit 1
+            if grep -nE '\bret[[:space:]]*=[[:space:]]*escape_to_root_for_adb_root[[:space:]]*\(|return[[:space:]]+escape_to_root_for_adb_root[[:space:]]*\(' "$root_api_file"; then
+              echo "::error::Invalid void escape_to_root_for_adb_root() usage still exists in $root_api_file"
+              exit 1
+            fi
           fi
-        fi
+        done
 
-        if [ -f drivers/kernelsu/policy/app_profile.c ]; then
-          if grep -q 'TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' drivers/kernelsu/policy/app_profile.c && \
-             ! grep -q '#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' drivers/kernelsu/policy/app_profile.c; then
-            echo "::error::TIF_KSU_DISABLE_ESCAPE_WITH_ROOT fallback missing in drivers/kernelsu/policy/app_profile.c"
-            exit 1
+        for tif_file in \
+          drivers/kernelsu/policy/app_profile.c \
+          drivers/kernelsu/supercall/dispatch.c; do
+          if [ -f "$tif_file" ]; then
+            if grep -q 'TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$tif_file" && \
+               ! grep -q '#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT' "$tif_file"; then
+              echo "::error::TIF_KSU_DISABLE_ESCAPE_WITH_ROOT fallback missing in $tif_file"
+              exit 1
+            fi
           fi
-        fi
+        done
 
         if [ -f drivers/kernelsu/feature/selinux_hide.c ]; then
           if grep -nE 'ksu_late_loaded|ksu_patch_text[[:space:]]*\(' drivers/kernelsu/feature/selinux_hide.c; then
@@ -1798,6 +1808,11 @@ runs:
         if [ -f drivers/kernelsu/supercall/dispatch.c ]; then
           if grep -nE 'ksu_set_spoof_version[[:space:]]*\(' drivers/kernelsu/supercall/dispatch.c; then
             echo "::error::ksu_set_spoof_version call still exists in drivers/kernelsu/supercall/dispatch.c"
+            exit 1
+          fi
+
+          if grep -nE '^#define KERNEL_SU_VERSION[[:space:]]' drivers/kernelsu/supercall/dispatch.c; then
+            echo "::error::Local KERNEL_SU_VERSION define still exists in drivers/kernelsu/supercall/dispatch.c"
             exit 1
           fi
         fi
