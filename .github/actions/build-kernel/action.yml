@@ -1179,31 +1179,54 @@ runs:
 
           [ -f "$target" ] || return 0
 
-          if grep -q 'escape_to_root_for_init[[:space:]]*();' "$target"; then
-            echo "Fixing SukiSU root escape API compatibility in: $target"
+          local changed=0
+
+          if grep -q 'escape_to_root_for_init[[:space:]]*(' "$target"; then
+            echo "Fixing escape_to_root_for_init API compatibility in: $target"
 
             if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
               sed -i \
-                's/escape_to_root_for_init[[:space:]]*();/escape_to_root_for_adb_root();/g' \
+                's/escape_to_root_for_init[[:space:]]*()/escape_to_root_for_adb_root()/g' \
                 "$target"
-
-              if ! grep -q '#include "selinux/selinux.h"' "$target"; then
-                if grep -q '#include "ksu.h"' "$target"; then
-                  sed -i '/#include "ksu.h"/a #include "selinux/selinux.h"' "$target"
-                else
-                  sed -i '1i#include "selinux/selinux.h"' "$target"
-                fi
-              fi
+              changed=1
             else
-              echo "::warning::escape_to_root_for_adb_root was not found; removing escape_to_root_for_init call from $target"
+              echo "::warning::escape_to_root_for_adb_root was not found; forcing escape_to_root_for_init callers to success in $target"
               sed -i \
-                's/escape_to_root_for_init[[:space:]]*();//g' \
+                's/escape_to_root_for_init[[:space:]]*()/0/g' \
                 "$target"
+              changed=1
             fi
           fi
 
-          if grep -n 'escape_to_root_for_init' "$target"; then
-            echo "::error::escape_to_root_for_init still remains in $target"
+          if grep -q 'escape_with_root_profile[[:space:]]*(' "$target"; then
+            echo "Fixing escape_with_root_profile API compatibility in: $target"
+
+            if grep -Rqs 'escape_to_root_for_adb_root[[:space:]]*(' "$root_dir" --include='*.c' --include='*.h' 2>/dev/null; then
+              sed -i \
+                's/escape_with_root_profile[[:space:]]*()/escape_to_root_for_adb_root()/g' \
+                "$target"
+              changed=1
+            else
+              echo "::warning::escape_to_root_for_adb_root was not found; forcing escape_with_root_profile callers to success in $target"
+              sed -i \
+                's/escape_with_root_profile[[:space:]]*()/0/g' \
+                "$target"
+              changed=1
+            fi
+          fi
+
+          if [ "$changed" = "1" ]; then
+            if ! grep -q '#include "selinux/selinux.h"' "$target"; then
+              if grep -q '#include "ksu.h"' "$target"; then
+                sed -i '/#include "ksu.h"/a #include "selinux/selinux.h"' "$target"
+              else
+                sed -i '1i#include "selinux/selinux.h"' "$target"
+              fi
+            fi
+          fi
+
+          if grep -nE 'escape_to_root_for_init|escape_with_root_profile' "$target"; then
+            echo "::error::Unsupported root escape API still remains in $target"
             exit 1
           fi
         }
@@ -1239,6 +1262,7 @@ runs:
         fix_sukisu_ksud_integration_c "kernel/runtime/ksud_integration.c"
         fix_sukisu_selinux_hide_c "kernel/feature/selinux_hide.c"
         fix_sukisu_escape_to_root_api "kernel/core/init.c" "kernel"
+        fix_sukisu_escape_to_root_api "kernel/feature/sucompat.c" "kernel"
         fix_sukisu_linker_symbols
 
         cd "$COMMON_KERNEL_FOLDER"
@@ -1273,6 +1297,7 @@ runs:
         fix_sukisu_ksud_integration_c "drivers/kernelsu/runtime/ksud_integration.c"
         fix_sukisu_selinux_hide_c "drivers/kernelsu/feature/selinux_hide.c"
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
         fix_sukisu_linker_symbols
 
         mkdir -p drivers/kernelsu/kpm/uapi include/uapi
@@ -1633,8 +1658,6 @@ runs:
           if [ -f "$SELINUXFS" ]; then
             echo "Applying Android 16 / 6.12 SELinux compatibility cleanup"
 
-            # Do not restore selinuxfs.c wholesale here.
-            # Restoring it can undo valid SUSFS changes and reintroduce symbol drift.
             sed -i \
               -e '/fake_status_initialize_key/d' \
               "$SELINUXFS" || true
@@ -1643,6 +1666,7 @@ runs:
 
         fix_sukisu_linker_symbols
         fix_sukisu_escape_to_root_api "drivers/kernelsu/core/init.c" "drivers/kernelsu"
+        fix_sukisu_escape_to_root_api "drivers/kernelsu/feature/sucompat.c" "drivers/kernelsu"
 
         echo "Running final SukiSU targeted safety sweep..."
 
@@ -1652,8 +1676,15 @@ runs:
             exit 1
           fi
 
-          if grep -n 'escape_to_root_for_init' drivers/kernelsu/core/init.c; then
-            echo "::error::Unsupported escape_to_root_for_init still exists in drivers/kernelsu/core/init.c"
+          if grep -nE 'escape_to_root_for_init|escape_with_root_profile' drivers/kernelsu/core/init.c; then
+            echo "::error::Unsupported root escape API still exists in drivers/kernelsu/core/init.c"
+            exit 1
+          fi
+        fi
+
+        if [ -f drivers/kernelsu/feature/sucompat.c ]; then
+          if grep -nE 'escape_to_root_for_init|escape_with_root_profile' drivers/kernelsu/feature/sucompat.c; then
+            echo "::error::Unsupported root escape API still exists in drivers/kernelsu/feature/sucompat.c"
             exit 1
           fi
         fi
