@@ -1952,6 +1952,151 @@ runs:
         echo "✅ SukiSU Ultra SUSFS patch step completed"
         echo "::endgroup::"
 
+        - name: Add SukiSU SUSFS legacy symbol shim
+      shell: bash
+      if: ${{ env.OP_SUSFS == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Add SukiSU SUSFS legacy symbol shim"
+
+        cd "$COMMON_KERNEL_FOLDER"
+
+        KSU_DRIVER_DIR="drivers/kernelsu"
+
+        if [ ! -d "$KSU_DRIVER_DIR" ]; then
+          echo "::error::KernelSU driver directory not found: $COMMON_KERNEL_FOLDER/$KSU_DRIVER_DIR"
+          find drivers -maxdepth 4 -type d \( -iname '*kernelsu*' -o -iname '*ksu*' \) -print || true
+          exit 1
+        fi
+
+        SHIM_FILE="$KSU_DRIVER_DIR/susfs_legacy_compat.c"
+        KSU_MAKEFILE="$KSU_DRIVER_DIR/Makefile"
+
+        if [ ! -f "$KSU_MAKEFILE" ]; then
+          echo "::error::KernelSU Makefile not found: $COMMON_KERNEL_FOLDER/$KSU_MAKEFILE"
+          exit 1
+        fi
+
+        cat > "$SHIM_FILE" <<'EOF'
+        #include <linux/kernel.h>
+        #include <linux/types.h>
+        #include <linux/fs.h>
+        #include <linux/path.h>
+        #include <linux/dcache.h>
+        #include <linux/namei.h>
+        #include <linux/cred.h>
+        #include <linux/sched.h>
+        #include <linux/uaccess.h>
+        #include <linux/input.h>
+        #include <linux/reboot.h>
+        #include <linux/stat.h>
+        #include <linux/errno.h>
+        #include <linux/lsm_hooks.h>
+        #include <linux/seq_file.h>
+        
+        #ifndef __weak
+        #define __weak __attribute__((weak))
+        #endif
+        
+        /*
+         * Compatibility shim for SUSFS patches that reference older KernelSU/SukiSU
+         * hook symbols. These weak fallbacks are intentionally conservative.
+         *
+         * If the active SukiSU tree provides a real non-weak implementation, the real
+         * implementation wins at link time. If it does not, these stubs prevent vmlinux
+         * link failure and default to "feature disabled / no interception".
+         */
+        
+        bool __weak ksu_is_input_hook_enabled(void)
+        {
+        	return false;
+        }
+        
+        bool __weak ksu_is_init_rc_hook_enabled(void)
+        {
+        	return false;
+        }
+        
+        bool __weak ksu_selinux_hide_running(void)
+        {
+        	return false;
+        }
+        
+        bool __weak ksu_selinux_hide_enabled(void)
+        {
+        	return false;
+        }
+        
+        bool __weak fake_status;
+        struct key __weak fake_status_initialize_key;
+        
+        void __weak initialize_fake_status(void)
+        {
+        }
+        
+        u32 __weak susfs_ksu_sid;
+        u32 __weak susfs_priv_app_sid;
+        
+        bool __weak susfs_is_current_ksu_domain(void)
+        {
+        	return false;
+        }
+        
+        int __weak ksu_handle_vfs_fstat(int *dfd, const char __user **filename_user,
+        				int *flags)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_stat(int *dfd, const char __user **filename_user,
+        			   int *flags)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+        			       void *argv, void *envp, int *flags)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+        					void *argv, void *envp, int *flags)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_sys_read(unsigned int fd, char __user *buf,
+        			       size_t *count)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+        				int *mode, int *flags)
+        {
+        	return 0;
+        }
+        
+        int __weak ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
+        				 void __user *arg)
+        {
+        	return 0;
+        }
+        EOF
+
+        if ! grep -q 'susfs_legacy_compat.o' "$KSU_MAKEFILE"; then
+          printf '\nobj-$(CONFIG_KSU) += susfs_legacy_compat.o\n' >> "$KSU_MAKEFILE"
+        fi
+
+        echo "SukiSU/SUSFS shim added:"
+        grep -n 'susfs_legacy_compat.o' "$KSU_MAKEFILE" || true
+        ls -la "$SHIM_FILE"
+
+        echo "✅ SukiSU SUSFS legacy symbol shim added"
+        echo "::endgroup::"
+
+
     - name: Revert Fake Patches for SUSFS
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
