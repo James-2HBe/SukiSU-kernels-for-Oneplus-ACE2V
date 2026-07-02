@@ -146,7 +146,7 @@ jobs:
               jq_filter="map(select(.os_version == \"A14\" or .os_version == \"A15\"))"
               ;;
             A16)
-              jq_filter="map(select(.os_version == \"A16\"))"
+              jq_filter="map(select(.os_version == \"oos16\"))"
               ;;
             A15)
               jq_filter="map(select(.os_version == \"A15\"))"
