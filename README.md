@@ -57,7 +57,7 @@ Actions → Build and Release OnePlus Kernels → Run workflow
 Use SukiSU option:
 
 ```json
-[{"type":"rsksu","hash":"main"}]
+[{"type":"SUKISU","hash":"main"}]
 ```
 
 ## 📋 Requirements
