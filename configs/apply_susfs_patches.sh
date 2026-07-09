@@ -769,7 +769,12 @@ fi
 grep -q '#include <linux/binfmts.h>' "$sucompat_h" || sed -i '1i#include <linux/binfmts.h>' "$sucompat_h"
 grep -q '#include <linux/fs.h>' "$sucompat_h" || sed -i '1i#include <linux/fs.h>' "$sucompat_h"
 
-if ! grep -q 'ksu_handle_execveat(int \*fd' "$sucompat_h"; then
+# Only add the shim prototype when sucompat.c does NOT already define the function.
+# SUSFS v2.2.0 defines ksu_handle_execveat*() in sucompat.c with `void *argv, void *envp`,
+# and these are called only internally (no external caller needs a header prototype).
+# Adding our `struct user_arg_ptr *` prototype here would conflict with that definition.
+if ! grep -q 'ksu_handle_execveat(int \*fd' "$sucompat_h" \
+   && ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat[[:space:]]*\(' "$sucompat_c"; then
   cat >> "$sucompat_h" <<'HEOF'
 
 int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
@@ -778,7 +783,8 @@ int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
 HEOF
 fi
 
-if ! grep -q 'ksu_handle_execveat_sucompat(int \*fd' "$sucompat_h"; then
+if ! grep -q 'ksu_handle_execveat_sucompat(int \*fd' "$sucompat_h" \
+   && ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_sucompat[[:space:]]*\(' "$sucompat_c"; then
   cat >> "$sucompat_h" <<'HEOF'
 
 int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
@@ -790,7 +796,11 @@ fi
 
   if [ -f "$ksud_integration_c" ]; then
 if grep -q 'ksu_handle_execveat_init[[:space:]]*(' "$ksud_integration_c"; then
-  if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$ksud_integration_c"; then
+  # Skip the stub if ksu_handle_execveat_init() is already DEFINED anywhere in the tree.
+  # SUSFS v2.2.0 defines it in feature/sucompat.c, so a second body here would be a
+  # duplicate-symbol link error. (ksud_integration.c only carries an extern decl on v2.2.0.)
+  if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$ksud_integration_c" \
+     && ! grep -RqsE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$base" --include='*.c'; then
     cat >> "$ksud_integration_c" <<'CEOF'
 
 /*
