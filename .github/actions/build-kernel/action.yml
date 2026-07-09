@@ -1,4 +1,4 @@
-name: 'Build OnePlus Kernel with ReSukiSU'
+name: 'Build OnePlus Kernel with SukiSU'
 
 inputs:
   op_config_json:
@@ -10,7 +10,7 @@ inputs:
     required: true
     type: choice
     options:
-      - RSKSU
+      - SUKISU
   ksu_branch_or_hash:
     description: 'KSU branch or commit hash (empty = auto-detect by ksu_type)'
     required: false
@@ -55,10 +55,10 @@ outputs:
     description: 'Full kernel version string'
     value: ${{ steps.save_metadata.outputs.kernel_version }}
   ksu_version:
-    description: 'ReSukiSU version number'
+    description: 'SukiSU version number'
     value: ${{ steps.save_metadata.outputs.ksu_version }}
   ksu_type:
-    description: 'ReSukiSU Variant'
+    description: 'SukiSU Variant'
     value: ${{ steps.save_metadata.outputs.ksu_type }}
   susfs_version:
     description: 'SUSFS version string'
@@ -123,8 +123,8 @@ runs:
       run: |
         set -euo pipefail
 
-        if [ "${{ inputs.ksu_type }}" != "RSKSU" ]; then
-          echo "::error::This action only supports RSKSU/ReSukiSU. Got: ${{ inputs.ksu_type }}"
+        if [ "${{ inputs.ksu_type }}" != "SUKISU" ]; then
+          echo "::error::This action only supports SUKISU/SukiSU. Got: ${{ inputs.ksu_type }}"
           exit 1
         fi
 
@@ -906,52 +906,52 @@ runs:
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         echo "::endgroup::"
 
-    - name: Add ReSukiSU
+    - name: Add SukiSU
       shell: bash
-      if: ${{ inputs.ksu_type == 'RSKSU' }}
+      if: ${{ inputs.ksu_type == 'SUKISU' }}
       run: |
         set -euo pipefail
-        echo "::group::Add ReSukiSU"
+        echo "::group::Add SukiSU"
 
         cd "$KERNEL_PLATFORM_FOLDER"
 
-        RSKSU_SETUP_SCRIPT="$(mktemp /tmp/rsksu_setup_XXXXXX.sh)"
-        trap 'rm -f "$RSKSU_SETUP_SCRIPT"' EXIT
+        SUKISU_SETUP_SCRIPT="$(mktemp /tmp/rsksu_setup_XXXXXX.sh)"
+        trap 'rm -f "$SUKISU_SETUP_SCRIPT"' EXIT
 
-        echo "Downloading ReSukiSU setup script..."
+        echo "Downloading SukiSU setup script..."
         if ! curl --fail --location --proto '=https' --tlsv1.2 -LSs \
           --retry 5 --retry-delay 5 --retry-all-errors \
-          "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" \
-          -o "$RSKSU_SETUP_SCRIPT"; then
-          echo "::error::Failed to download ReSukiSU setup.sh after retries"
+          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
+          -o "$SUKISU_SETUP_SCRIPT"; then
+          echo "::error::Failed to download SukiSU setup.sh after retries"
           exit 1
         fi
 
-        SCRIPT_SIZE="$(stat -c%s "$RSKSU_SETUP_SCRIPT")"
+        SCRIPT_SIZE="$(stat -c%s "$SUKISU_SETUP_SCRIPT")"
         if [ "$SCRIPT_SIZE" -lt 512 ]; then
           echo "::error::Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
           exit 1
         fi
 
-        if ! head -n1 "$RSKSU_SETUP_SCRIPT" | grep -q '^#!'; then
+        if ! head -n1 "$SUKISU_SETUP_SCRIPT" | grep -q '^#!'; then
           echo "::error::Downloaded setup.sh does not start with a shebang. Aborting."
           exit 1
         fi
 
-        chmod +x "$RSKSU_SETUP_SCRIPT"
+        chmod +x "$SUKISU_SETUP_SCRIPT"
 
         KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
         if [ -z "$KSU_INPUT" ]; then
           echo "No branch/hash provided — using default installer mode."
-          bash "$RSKSU_SETUP_SCRIPT"
+          bash "$SUKISU_SETUP_SCRIPT"
         else
-          echo "Using ReSukiSU branch/hash: $KSU_INPUT"
-          bash "$RSKSU_SETUP_SCRIPT" "$KSU_INPUT"
+          echo "Using SukiSU branch/hash: $KSU_INPUT"
+          bash "$SUKISU_SETUP_SCRIPT" "$KSU_INPUT"
         fi
 
         if [ ! -d "$KERNEL_PLATFORM_FOLDER/KernelSU" ]; then
-          echo "::error::KernelSU directory was not created by ReSukiSU setup."
-          find "$KERNEL_PLATFORM_FOLDER" -maxdepth 3 -type d \( -iname "*ksu*" -o -iname "*resuki*" \) || true
+          echo "::error::KernelSU directory was not created by SukiSU setup."
+          find "$KERNEL_PLATFORM_FOLDER" -maxdepth 3 -type d \( -iname "*ksu*" -o -iname "*suki*" \) || true
           exit 1
         fi
 
@@ -964,12 +964,17 @@ runs:
           COMMITS_COUNT=30000
         fi
 
-        BASE_VERSION=30700
+        BASE_VERSION=37185
         KSU_VERSION=$((COMMITS_COUNT + BASE_VERSION))
 
-        echo "ReSukiSU commits: $COMMITS_COUNT"
-        echo "ReSukiSU version: $KSU_VERSION"
-        echo "ReSukiSU commit:  $KSU_COMMIT_SHA"
+        echo "SukiSU commits: $COMMITS_COUNT"
+        echo "SukiSU version: $KSU_VERSION"
+        echo "SukiSU commit:  $KSU_COMMIT_SHA"
+
+        # SukiSU Ultra reports its version via DKSU_VERSION in kernel/Makefile.
+        if [ -f "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" ]; then
+          sed -i "s/DKSU_VERSION=[0-9]*/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
+        fi
 
         {
           echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA"
@@ -986,22 +991,24 @@ runs:
 
         sed -i \
           -e '/^CONFIG_KSU=/d' \
+          -e '/^CONFIG_KPM=/d' \
           -e '/^CONFIG_KSU_MULTI_MANAGER_SUPPORT=/d' \
           -e '/^CONFIG_KSU_FULL_NAME_FORMAT=/d' \
           "$DEFCONFIG" || true
 
         {
           printf '%s\n' 'CONFIG_KSU=y'
+          printf '%s\n' 'CONFIG_KPM=n'
           printf '%s\n' 'CONFIG_KSU_MULTI_MANAGER_SUPPORT=y'
-          printf 'CONFIG_KSU_FULL_NAME_FORMAT="%s-⚡Ultra⚡@ReSukiSU"\n' "${TAG_NAME}"
+          printf 'CONFIG_KSU_FULL_NAME_FORMAT="%s-⚡Ultra⚡@SukiSU"\n' "${TAG_NAME}"
         } >> "$DEFCONFIG"
 
         {
-          echo "RSKSU"
+          echo "SUKISU"
           echo "$KSU_VERSION"
         } >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
-        echo "✅ ReSukiSU added (commit: ${KSU_COMMIT_SHA:0:8})"
+        echo "✅ SukiSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
@@ -1058,7 +1065,7 @@ runs:
           [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$1" ]
         }
 
-        if [ "${{ inputs.ksu_type }}" = "RSKSU" ]; then
+        if [ "${{ inputs.ksu_type }}" = "SUKISU" ]; then
           echo "NEED_HOOKS=false" >> "$GITHUB_ENV"
         elif [ "$SUSVER" != "unknown" ] && version_lte "${SUSVER#v}" "1.5.12"; then
           echo "NEED_HOOKS=true" >> "$GITHUB_ENV"
@@ -1069,7 +1076,7 @@ runs:
         case "$SUSVER" in
           v1.5.8|v1.5.9|v1.5.10|v1.5.11|v1.5.12|v2.0.0|v2.1.0|v2.2.0)
             echo "✅ Supported SUSFS version: $SUSVER"
-            echo "ℹ️ Skipping KernelSU folder patch for ReSukiSU"
+            echo "ℹ️ Skipping KernelSU folder patch for SukiSU"
             ;;
           unknown)
             echo "Warning: Could not detect SUSFS version. Continuing because patch file exists."
@@ -2576,8 +2583,8 @@ runs:
           echo "Kernel Uname: ${{ env.KERNEL_UNAME }}"
           echo "Build User: ${{ env.BUILD_USER }}"
           echo "Build Host: ${{ env.BUILD_HOST }}"
-          echo "ReSukiSU Version: ${KSUVER:-unknown}"
-          echo "ReSukiSU commit SHA: ${KSU_SHA:-unknown}"
+          echo "SukiSU Version: ${KSUVER:-unknown}"
+          echo "SukiSU commit SHA: ${KSU_SHA:-unknown}"
           if [ "${{ env.OP_SUSFS }}" = true ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
             echo "SUSFS commit SHA: $SUSFS_SHA"
@@ -2622,12 +2629,12 @@ runs:
           echo "| **Kernel Uname** | \`${{ env.KERNEL_UNAME }}\` |"
           echo "| **Build User** | ${{ env.BUILD_USER }} |"
           echo "| **Build Host** | ${{ env.BUILD_HOST }} |"
-          echo "| **ReSukiSU Version** | ${KSUVER:-unknown} |"
+          echo "| **SukiSU Version** | ${KSUVER:-unknown} |"
           
           if [ "$KSU_SHA" != "unknown" ]; then
-            echo "| **ReSukiSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/ReSukiSU/ReSukiSU/commit/$KSU_SHA) |"
+            echo "| **SukiSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/SukiSU-Ultra/SukiSU-Ultra/commit/$KSU_SHA) |"
           else
-            echo "| **ReSukiSU Commit** | unknown |"
+            echo "| **SukiSU Commit** | unknown |"
           fi
           
           if [ "${{ env.OP_SUSFS }}" = true ]; then

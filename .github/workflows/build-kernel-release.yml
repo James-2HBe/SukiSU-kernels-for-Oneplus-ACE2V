@@ -2,7 +2,7 @@ name: Build and Release OnePlus Kernels
 
 run-name: >-
   ${{ github.event.inputs.op_target_model != '' && github.event.inputs.op_target_model || github.event.inputs.op_model }}
-  • RSKSU
+  • SUKISU
   • ${{ github.event.inputs.build_timestamp != '' && github.event.inputs.build_timestamp || 'auto timestamp' }}
 
 permissions:
@@ -40,7 +40,7 @@ on:
         type: string
         default: ''
       ksu_options:
-        description: 'Enter ReSukiSU build json'
+        description: 'Enter SukiSU build json'
         required: true
         type: string
         default: '[{"type":"rsksu","hash":"main"}]'
@@ -237,8 +237,8 @@ jobs:
           ksu_type=$(echo "$ksu_options_normalized" | jq -r '.[0].type')
           ksu_ref=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')
           
-          KSU_REPO_OWNER="ReSukiSU"
-          KSU_REPO_NAME="ReSukiSU"
+          KSU_REPO_OWNER="SukiSU-Ultra"
+          KSU_REPO_NAME="SukiSU-Ultra"
           
           HEAD_REF="refs/heads/${ksu_ref}"
           TAG_REF="refs/tags/${ksu_ref}"
@@ -755,7 +755,7 @@ jobs:
             echo ""
             echo "Outputs:"
             echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
-            echo "  - ReSukiSU: v${{ steps.build.outputs.ksu_version }}"
+            echo "  - SukiSU: v${{ steps.build.outputs.ksu_version }}"
             echo "ksun_ver=" >> "$GITHUB_OUTPUT"
             echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
             if [ "${{ matrix.susfs }}" = true ]; then
@@ -802,7 +802,7 @@ jobs:
           | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
           EOF
             cat >> $GITHUB_STEP_SUMMARY << EOF
-          | **ReSukiSU** | v${{ steps.build.outputs.ksu_version }} |
+          | **SukiSU** | v${{ steps.build.outputs.ksu_version }} |
           EOF
             
             if [ "${{ matrix.susfs }}" = true ]; then
@@ -872,7 +872,7 @@ jobs:
       REPO_NAME: ${{ github.event.repository.name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SUSFS_BASE_VERSION: ${{ needs.set-op-model.outputs.susfs_base_version }}
-      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With ReSukiSU & SUSFS ${{ needs.set-op-model.outputs.susfs_base_version }} *TEST BUILD*'
+      RELEASE_NAME: '*TEST BUILD* OnePlus Kernels With SukiSU & SUSFS ${{ needs.set-op-model.outputs.susfs_base_version }} *TEST BUILD*'
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -940,7 +940,7 @@ jobs:
             echo "- Flashing the wrong ZIP may cause bootloop."
             echo "- Back up your current boot/init_boot/vendor_boot before flashing."
             echo "- Use Kernel Flasher or another trusted flashing method."
-            echo "- If switching from Magisk, APatch, KernelSU, ReSukiSU, or another fork, clean old root leftovers carefully."
+            echo "- If switching from Magisk, APatch, KernelSU, SukiSU, or another fork, clean old root leftovers carefully."
             echo ""
             echo "## Quick Guide"
             echo ""
@@ -949,7 +949,7 @@ jobs:
             echo "| **Device** | \`OP12\`, \`OP13r\`, \`OP-NORD-4\` |"
             echo "| **OS Version** | \`A16\`, \`A15\`, \`A14\` |"
             echo "| **Kernel Base** | \`android15-6.6.30\`, \`android14-6.1.75\` |"
-            echo "| **Root Type** | \`RSKSU\` |"
+            echo "| **Root Type** | \`SUKISU\` |"
             echo ""
           } > 00_DOWNLOADS.md
 
@@ -1064,7 +1064,7 @@ jobs:
             <<< "${{ needs.set-op-model.outputs.active_gki_keys }}"
           
           cat << EOF > release_notes.md
-          # 🎯 OnePlus Kernels with ReSukiSU & SUSFS $SUSFS_BASE_VERSION
+          # 🎯 OnePlus Kernels with SukiSU & SUSFS $SUSFS_BASE_VERSION
           
           > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
           > **Build ID:** \`${{ github.run_id }}\`  
@@ -1180,8 +1180,8 @@ jobs:
           
           ksu_display=$(ksu_display_value "$ksu_ref" "$ksu_resolved_hash")
           cat << EOF >> release_notes.md
-          | **ReSukiSU Branch** | \`$ksu_display\` |
-          | **ReSukiSU Version** | \`$ksu_ver_global\` |
+          | **SukiSU Branch** | \`$ksu_display\` |
+          | **SukiSU Version** | \`$ksu_ver_global\` |
           EOF
           cat << EOF >> release_notes.md
           | **SUSFS Version** | \`$SUSFS_BASE_VERSION\` |
@@ -1204,7 +1204,7 @@ jobs:
           ### 🔐 Root Management
           EOF
           cat << EOF >> release_notes.md
-          - **ReSukiSU** - Kernel-level root solution
+          - **SukiSU** - Kernel-level root solution
           EOF
           cat << EOF >> release_notes.md
           - **SUSFS $SUSFS_BASE_VERSION** - Advanced hiding and security features
@@ -1254,8 +1254,8 @@ jobs:
           ### Official Manager
           EOF
           cat << EOF >> release_notes.md
-          - **ReSukiSU Manager**
-            → [GitHub Release](https://github.com/ReSukiSU/ReSukiSU/releases)
+          - **SukiSU Manager**
+            → [GitHub Release](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
           EOF
           cat << EOF >> release_notes.md
           ### Community Managers
@@ -1287,8 +1287,8 @@ jobs:
               c. **KSU GKI**: if you are 100% sure you already flashed stock init_boot/boot/vendor_boot, no action is needed; otherwise, follow the same steps as KSU LKM.
               d. **APatch**: remove /data/adb contents to avoid leftover root conflicts **after flashing the AnyKernel3 ZIP**.
           3. Flash the ZIP to the active slot using Kernel Flasher.
-          4. Install the ReSukiSU Manager APK, same version as mentioned in the AnyKernel3 ZIP name.
-          5. Open the ReSukiSU app.
+          4. Install the SukiSU Manager APK, same version as mentioned in the AnyKernel3 ZIP name.
+          5. Open the SukiSU app.
           6. Reboot the device if you performed any cleanup in step 2.
           
           ---
@@ -1317,7 +1317,7 @@ jobs:
           
           ## 🙏 Credits
           
-          - **ReSukiSU Team** - Root solution
+          - **SukiSU Team** - Root solution
           - **simonpunk** - SUSFS development
           - **OnePlus** - Kernel source code
           - **Community Contributors** - Testing and feedback
