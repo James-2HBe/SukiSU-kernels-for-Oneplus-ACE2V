@@ -880,9 +880,11 @@ PY
   fi
 
   if [ -f "$ksud_integration_c" ] && grep -q 'ksu_handle_execveat_init[[:space:]]*(' "$ksud_integration_c"; then
-if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$ksud_integration_c"; then
-  echo "::error::ksu_handle_execveat_init body missing in $ksud_integration_c"
-  grep -n 'ksu_handle_execveat_init' "$ksud_integration_c" || true
+# The definition may live in ksud_integration.c (older trees) OR feature/sucompat.c
+# (SUSFS v2.2.0). Accept either — only fail if it's defined nowhere in the tree.
+if ! grep -RqsE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$base" --include='*.c'; then
+  echo "::error::ksu_handle_execveat_init referenced but no definition found under $base"
+  grep -rn 'ksu_handle_execveat_init' "$base" --include='*.c' || true
   exit 1
 fi
   fi
@@ -1552,8 +1554,8 @@ PY
   fi
 
   if grep -q 'ksu_handle_execveat_init[[:space:]]*(' drivers/kernelsu/runtime/ksud_integration.c && \
- ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' drivers/kernelsu/runtime/ksud_integration.c; then
-echo "::error::ksu_handle_execveat_init is referenced but no function body exists"
+ ! grep -RqsE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' drivers/kernelsu --include='*.c'; then
+echo "::error::ksu_handle_execveat_init is referenced but no function body exists anywhere under drivers/kernelsu"
 grep -n 'ksu_handle_execveat_init' drivers/kernelsu/runtime/ksud_integration.c || true
 exit 1
   fi
