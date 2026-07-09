@@ -1162,6 +1162,22 @@ sed -i '1i\ccflags-y += -I$(srctree)/$(src)' drivers/kernelsu/Kbuild
 
   grep -q "kpm/uapi" drivers/kernelsu/Kbuild || \
 sed -i '/^obj-\$(CONFIG_KPM) += kpm\/compact.o/i\ccflags-\$(CONFIG_KPM) += -I$(srctree)/$(src)/kpm/uapi -I$(srctree)/include/uapi' drivers/kernelsu/Kbuild
+
+  # --- android16-6.12 / 6.13 GKI include fix ---
+  # Kbuild changed $(src) semantics on 6.12/6.13, so the manager's own
+  # -I$(KSU_KERNEL_DIR)/include (KSU_KERNEL_DIR = $(srctree)/$(src)) fails to resolve
+  # for the symlinked drivers/kernelsu → 'util.h' (drivers/kernelsu/include/util.h) not
+  # found compiling su_mount_ns.c / sucompat.c / supercall.c. Anchor an include on the
+  # Kbuild's own absolute directory ($(MDIR) = $(dir $(abspath $(lastword ...)))), which
+  # is immune to the $(src) breakage. Builds fine on older kernels too (additive -I).
+  if ! grep -q 'susfs-fix-abs-include' drivers/kernelsu/Kbuild; then
+if grep -qE '^MDIR := \$\(dir \$\(abspath' drivers/kernelsu/Kbuild; then
+  sed -i '/^MDIR := \$(dir \$(abspath/a ccflags-y += -I$(MDIR) -I$(MDIR)include # susfs-fix-abs-include' drivers/kernelsu/Kbuild
+else
+  printf '\nKSU_ABS_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))\nccflags-y += -I$(KSU_ABS_DIR) -I$(KSU_ABS_DIR)include # susfs-fix-abs-include\n' >> drivers/kernelsu/Kbuild
+fi
+echo "Applied MDIR-based KSU include-path fix (6.12+) to drivers/kernelsu/Kbuild"
+  fi
 fi
 
 ARCH_H="$(find "$KERNEL_PLATFORM_FOLDER/KernelSU" -name "arch.h" -type f 2>/dev/null | head -n 1 || true)"
