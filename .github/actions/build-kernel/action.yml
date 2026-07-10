@@ -1953,7 +1953,14 @@ runs:
         fi
         
         if [ -f "$COMMON_KERNEL_FOLDER/build.log" ]; then
-          WARNINGS_COUNT="$(grep -ciE '\bwarning:' "$COMMON_KERNEL_FOLDER/build.log" || true)"
+          # Count only real (compiler) warnings. Exclude harmless config-processing noise:
+          #  - vendor Kconfig quirks (e.g. drivers/misc/mediatek/**/Kconfig: "ignoring
+          #    unsupported character", "no new line at end of file", type redefinitions)
+          #  - defconfig "override: reassigning to symbol X" (feature steps re-set an
+          #    existing symbol; the last value wins, nothing is broken).
+          # Both are emitted from *:Kconfig / *:defconfig, never from a real .c/.h compile.
+          WARNINGS_COUNT="$(grep -iE '\bwarning:' "$COMMON_KERNEL_FOLDER/build.log" 2>/dev/null \
+            | grep -cvE '(Kconfig|defconfig):[0-9]+:warning:' || true)"
           [ -n "$WARNINGS_COUNT" ] || WARNINGS_COUNT="0"
         else
           WARNINGS_COUNT="0"
