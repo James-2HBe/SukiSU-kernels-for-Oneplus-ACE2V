@@ -976,6 +976,14 @@ runs:
           sed -i "s/DKSU_VERSION=[0-9]*/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
         fi
 
+        # Brand the manager's "Kernel full version" string. SukiSU-Ultra does NOT read
+        # CONFIG_KSU_FULL_NAME_FORMAT (it's referenced nowhere in the source); the shown
+        # string is KSU_VERSION_FULL, built in kernel/Kbuild as v<tag>-<sha>@<branch>
+        # (@HEAD when pinned to a tag / detached checkout). Override it to a fixed brand.
+        if [ -f "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Kbuild" ]; then
+          sed -i 's#^KSU_VERSION_FULL :=.*#KSU_VERSION_FULL := v$(VERSION_TAG)-⚡Ultra⚡@SukiSU#' "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Kbuild" || true
+        fi
+
         {
           echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA"
           echo "KSUVER=$KSU_VERSION"
@@ -1000,7 +1008,8 @@ runs:
           printf '%s\n' 'CONFIG_KSU=y'
           printf '%s\n' 'CONFIG_KPM=n'
           printf '%s\n' 'CONFIG_KSU_MULTI_MANAGER_SUPPORT=y'
-          printf 'CONFIG_KSU_FULL_NAME_FORMAT="%s-⚡Ultra⚡@SukiSU"\n' "${TAG_NAME}"
+          # (CONFIG_KSU_FULL_NAME_FORMAT dropped — SukiSU-Ultra ignores it; the version
+          #  string is branded via KSU_VERSION_FULL in the Kbuild above.)
         } >> "$DEFCONFIG"
 
         {
