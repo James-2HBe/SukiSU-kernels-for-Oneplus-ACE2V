@@ -9,6 +9,12 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  # A new TEST dispatch cancels the previous test build (only the latest matters).
+  # RELEASE builds get their own group and are NEVER auto-cancelled mid-run.
+  group: ${{ github.workflow }}-${{ github.event.inputs.make_release == 'true' && 'release' || 'test' }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event.inputs.make_release != 'true' }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -61,6 +67,11 @@ on:
         default: false
       enable_adios:
         description: 'Enable ADIOS I/O scheduler support (6.1/6.6 kernels only)'
+        required: false
+        type: boolean
+        default: false
+      spoof_uname:
+        description: 'SUSFS: spoof kernel uname (CONFIG_KSU_SUSFS_SPOOF_UNAME). Off by default — some apps check uname.'
         required: false
         type: boolean
         default: false
@@ -501,6 +512,7 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
+            echo "| 🎭 SUSFS spoof uname | ${{ inputs.spoof_uname && '✅' || '❌' }} |"
             echo ""
             echo "**SUSFS refs** _(per kernel, resolved at run time)_"
             echo ""
@@ -622,6 +634,8 @@ jobs:
       # upstream toolchain download on cache-miss for small builds, while the full
       # matrix still requires the toolchain-cache mirror (avoids 143x upstream hammer).
       OP_TOTAL_DEVICES: ${{ needs.set-op-model.outputs.device_count }}
+      # SUSFS uname spoofing toggle, consumed by configs/apply_susfs_patches.sh.
+      OP_SPOOF_UNAME: ${{ inputs.spoof_uname }}
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v6
@@ -865,6 +879,43 @@ jobs:
           df -h /
           
           echo "::endgroup::"
+
+  build_report:
+    name: 📋 Build report
+    needs: [set-op-model, build]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Summarize build results
+        run: |
+          set -uo pipefail
+          # Pull every "build (...)" matrix job's final conclusion for this run.
+          jobs="$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name|startswith("build (")) | "\(.conclusion)\t\(.name)"')"
+
+          total=$(printf '%s\n' "$jobs" | grep -c . || true)
+          ok=$(printf '%s\n'    "$jobs" | grep -c   '^success' || true)
+          bad=$(printf '%s\n'   "$jobs" | grep -cvE '^success' || true)
+
+          {
+            echo "## 📋 Build Report"
+            echo ""
+            echo "**✅ ${ok} succeeded · ❌ ${bad} failed · ${total} total**"
+            if [ "${bad:-0}" -gt 0 ]; then
+              echo ""
+              echo "### ❌ Failed / cancelled"
+              echo ""
+              echo "| Device | Result |"
+              echo "|--------|--------|"
+              printf '%s\n' "$jobs" | grep -vE '^success' | while IFS=$'\t' read -r concl name; do
+                dev=$(printf '%s' "$name" | sed -E 's/^build \(([^,]+),[^,]+,[^,]+,[^,]+, *([^,]+), *([^,]+), *([^,]+),.*/\1 (\2-\3, \4)/')
+                echo "| \`${dev}\` | ${concl:-unknown} |"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   trigger-release:
     needs: [set-op-model, build]

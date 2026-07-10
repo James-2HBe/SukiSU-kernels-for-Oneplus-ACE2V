@@ -1710,7 +1710,6 @@ CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=n
 CONFIG_KSU_SUSFS_ENABLE_LOG=y
 CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
 CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
@@ -1723,6 +1722,18 @@ sed -i '/^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=/d' \
 
 echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=n" \
   >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+
+# SUSFS uname spoofing — opt-in via OP_SPOOF_UNAME (workflow input 'spoof_uname',
+# default off, since some apps read uname). Written explicitly so the value is
+# deterministic regardless of what the base defconfig carried.
+sed -i '/^CONFIG_KSU_SUSFS_SPOOF_UNAME=/d' \
+  "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" || true
+if [ "${OP_SPOOF_UNAME:-false}" = "true" ]; then
+  echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+  echo "SUSFS: SPOOF_UNAME enabled (OP_SPOOF_UNAME=true)"
+else
+  echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=n" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+fi
 
 # --- Assert every SUSFS defconfig symbol is real for this SUSFS version ---
 # Guards against susfs renaming/removing options between versions (would otherwise
