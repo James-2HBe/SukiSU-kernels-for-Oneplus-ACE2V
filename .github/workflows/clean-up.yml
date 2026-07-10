@@ -131,11 +131,69 @@ on:
         type: boolean
         default: false
 
+      prune_toolchain_cache:
+        description: 'Also prune stale assets from the toolchain-cache release'
+        required: false
+        type: boolean
+        default: false
+
+      toolchain_cache_age_days:
+        description: 'Toolchain-cache: delete assets not updated in N days (a release rebuild re-mirrors any still-needed ones)'
+        required: false
+        default: '90'
+
 permissions:
   actions: write
   contents: read
 
 jobs:
+  cleanup-toolchain-cache:
+    # Opt-in prune of the toolchain-cache RELEASE (github Actions caches are handled
+    # by the jobs below + GitHub's 10GB LRU; release assets are neither, so they grow
+    # unbounded as OnePlus bumps toolchain revs). Deleting a stale asset is safe: the
+    # next release build's (idempotent) mirror re-fetches anything still referenced.
+    if: ${{ inputs.prune_toolchain_cache }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Prune stale toolchain-cache assets
+        run: |
+          set -uo pipefail
+          TAG="toolchain-cache"
+          AGE="${{ inputs.toolchain_cache_age_days }}"; AGE="${AGE:-90}"
+          DRY="${{ inputs.dry_run }}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "No '$TAG' release — nothing to prune."; exit 0
+          fi
+          cutoff=$(date -u -d "-${AGE} days" +%s)
+          echo "Pruning $TAG assets not updated since $(date -u -d "@$cutoff") (age > ${AGE}d, dry_run=$DRY)"
+          kept=0; gone=0
+          while IFS=$'\t' read -r id ts name; do
+            [ -n "${id:-}" ] || continue
+            ats=$(date -u -d "$ts" +%s 2>/dev/null || echo 0)
+            if [ "$ats" -lt "$cutoff" ]; then
+              if [ "$DRY" = "true" ]; then
+                echo "  [dry-run] would delete: $name (updated $ts)"
+              else
+                gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$id" \
+                  && echo "  deleted: $name"
+              fi
+              gone=$((gone+1))
+            else
+              kept=$((kept+1))
+            fi
+          done < <(gh api --paginate "repos/${{ github.repository }}/releases/tags/$TAG" \
+                     --jq '.assets[] | "\(.id)\t\(.updated_at)\t\(.name)"')
+          {
+            echo "## 🧰 Toolchain-cache prune"
+            echo ""
+            echo "- Threshold: assets older than **${AGE} days**"
+            echo "- $( [ "$DRY" = "true" ] && echo 'Would delete' || echo 'Deleted' ): **${gone}** · Kept: **${kept}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   analyze:
     runs-on: ubuntu-latest
     outputs:
