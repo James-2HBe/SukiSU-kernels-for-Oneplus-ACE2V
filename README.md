@@ -1,6 +1,6 @@
 <div align="center">
 
-# OnePlus ● SukiSU ● SUSFS
+# OnePlus 📦 SukiSU 📦 SUSFS
 
 ### Wild Fork
 
