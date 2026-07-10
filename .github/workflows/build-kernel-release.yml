@@ -621,6 +621,11 @@ jobs:
     outputs:
       ksun_ver: ${{ steps.build-stat.outputs.ksu_version }}
       ksu_ver: ${{ steps.build-stat.outputs.ksu_version }}
+    env:
+      # Total devices in this run — lets the kernel-source-sync step allow a direct
+      # upstream toolchain download on cache-miss for small builds, while the full
+      # matrix still requires the toolchain-cache mirror (avoids 143x upstream hammer).
+      OP_TOTAL_DEVICES: ${{ needs.set-op-model.outputs.device_count }}
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v6
