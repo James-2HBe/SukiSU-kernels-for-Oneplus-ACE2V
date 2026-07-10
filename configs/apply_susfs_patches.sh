@@ -1698,24 +1698,23 @@ echo "✅ sucompat.c API/static_key validated: $sucompat_c"
   fi
 done
 
+# SUSFS defconfig — ONLY the CONFIG_KSU_SUSFS_* symbols that actually exist in the
+# SUSFS version being built. v2.2.0 dropped the granular v1.5.x options
+# (HAS_MAGIC_MOUNT, AUTO_ADD_*, SUS_OVERLAYFS, TRY_UMOUNT, SUS_SU); writing those
+# does nothing (olddefconfig silently discards unknown symbols). The assert below
+# fails the build if any symbol here is not defined in the KSU Kconfig, so this
+# list can never silently drift again.
 {
   cat <<'EOF'
 CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
 CONFIG_KSU_SUSFS_SPOOF_UNAME=n
 CONFIG_KSU_SUSFS_ENABLE_LOG=y
 CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
 CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 CONFIG_KSU_SUSFS_SUS_MAP=y
-CONFIG_KSU_SUSFS_SUS_SU=n
 EOF
 } >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
 
@@ -1724,6 +1723,31 @@ sed -i '/^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=/d' \
 
 echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=n" \
   >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+
+# --- Assert every SUSFS defconfig symbol is real for this SUSFS version ---
+# Guards against susfs renaming/removing options between versions (would otherwise
+# be silently dropped by olddefconfig and the feature quietly never enabled).
+_DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+_KSU_KCONFIG=""
+for _k in "$KSU_FOLDER/kernel/Kconfig" "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kconfig"; do
+  [ -f "$_k" ] && { _KSU_KCONFIG="$_k"; break; }
+done
+if [ -n "$_KSU_KCONFIG" ]; then
+  _susfs_missing=0
+  while IFS= read -r _line; do
+    _sym="${_line%%=*}"; _sym="${_sym#CONFIG_}"
+    grep -qE "^[[:space:]]*config[[:space:]]+${_sym}([[:space:]]|\$)" "$_KSU_KCONFIG" && continue
+    echo "::warning::SUSFS defconfig sets CONFIG_${_sym} but no 'config ${_sym}' exists in $_KSU_KCONFIG — it would be dropped by olddefconfig"
+    _susfs_missing=$((_susfs_missing + 1))
+  done < <(grep -E '^CONFIG_KSU_SUSFS' "$_DEFCONFIG")
+  if [ "$_susfs_missing" -gt 0 ]; then
+    echo "::error::$_susfs_missing SUSFS defconfig option(s) are not defined in the KSU Kconfig for this SUSFS version — update the SUSFS defconfig block in apply_susfs_patches.sh"
+    exit 1
+  fi
+  echo "✅ All SUSFS defconfig options are defined in $_KSU_KCONFIG"
+else
+  echo "::warning::Could not locate KSU Kconfig to verify SUSFS defconfig options"
+fi
 
 echo "✅ SUSFS patches applied successfully"
 echo "::endgroup::"

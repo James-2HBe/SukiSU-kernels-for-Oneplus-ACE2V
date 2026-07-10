@@ -43,7 +43,7 @@ on:
         description: 'Enter SukiSU build json'
         required: true
         type: string
-        default: '[{"type":"SUKISU","hash":"main"}]'
+        default: '[{"type":"SUKISU","hash":"v4.1.3"}]'
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -65,7 +65,7 @@ on:
         type: boolean
         default: false
       mirror_toolchains:
-        description: 'Do you want to sync toolchains before build? [99% runs not required]'
+        description: 'Force toolchain sync before build (auto-on for releases; ~99% of test runs do not need it)'
         required: false
         type: boolean
         default: false
@@ -130,7 +130,7 @@ jobs:
           input="${{ github.event.inputs.op_model }}"
           target_model="${{ github.event.inputs.op_target_model }}"
           ksu_options_raw='${{ github.event.inputs.ksu_options }}'
-          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then .hash = "main" else . end else error("No type found") end)' 2>&1); then
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then .hash = "v4.1.3" else . end else error("No type found") end)' 2>&1); then
             echo "::error::ksu_options validation failed: $ksu_options_normalized"
             exit 1
           fi
@@ -506,7 +506,7 @@ jobs:
           - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
           - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
           - Create Debug Artifacts: ${{ inputs.debug && '✅ Yes' || '❌ No' }}
-          - Sync toolchains: ${{ inputs.mirror_toolchains && '✅ Yes' || '❌ No' }}
+          - Sync toolchains: ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅ Yes' || '❌ No' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' (auto for release)' || '' }}
           
           **SUSFS Configuration:**
           EOF
@@ -560,7 +560,13 @@ jobs:
 
   mirror_toolchain:
     needs: set-op-model
-    if: ${{ inputs.mirror_toolchains }}
+    # Run when explicitly requested OR for any release build. The mirror workflow is
+    # idempotent (it HEAD-checks each toolchain in the toolchain-cache release and
+    # skips ones already present, before any download), so on a warm cache this is
+    # just a few quick checks; on a cold cache it auto-populates instead of letting
+    # the build hard-fail with "Toolchain NOT FOUND in cache". Test/iterative builds
+    # (make_release=false) still skip it entirely for fast turnaround.
+    if: ${{ inputs.mirror_toolchains || inputs.make_release }}
     uses: ./.github/workflows/mirror-toolchains.yml
     secrets: inherit
 
