@@ -2197,8 +2197,20 @@ runs:
           echo "Artifact Name: ${{ env.ZIP_NAME }}"
         } | tee summary.txt
         
+        # One-line header so the collapsed block is scannable across 100+ devices
+        SUM_HEAD="🎯 <b>${{ env.OP_MODEL }}</b> — ${{ steps.save_metadata.outputs.kernel_version }}"
+        SUM_HEAD="${SUM_HEAD} · ⚡SukiSU ${KSUVER:-?}"
+        if [ "${{ env.OP_SUSFS }}" = true ]; then SUM_HEAD="${SUM_HEAD} · SUSFS ${SUSVER:-?}"; fi
+        SUM_HEAD="${SUM_HEAD} · ⏱ ${{ steps.collect_stats.outputs.build_time }}s"
+        if [ "${{ steps.collect_stats.outputs.warnings_count }}" != "0" ]; then
+          SUM_HEAD="${SUM_HEAD} · ⚠️ ${{ steps.collect_stats.outputs.warnings_count }}"
+        fi
+
         {
-          echo "### 🎯 Kernel Build Summary"
+          echo "<details>"
+          echo "<summary>${SUM_HEAD}</summary>"
+          echo ""
+          echo "#### 🎯 Kernel Build Summary"
           echo ""
           echo "| Metric | Value |"
           echo "|--------|-------|"
@@ -2227,7 +2239,7 @@ runs:
           fi
           
           echo ""
-          echo "### 🔧 OnePlus Features"
+          echo "#### 🔧 OnePlus Features"
           echo ""
           echo "| Feature | Status |"
           echo "|---------|--------|"
@@ -2243,7 +2255,7 @@ runs:
           echo "| **Droidspaces** | ${{ env.OP_DS }} |"
           
           echo ""
-          echo "### 📊 Build Metrics"
+          echo "#### 📊 Build Metrics"
           echo ""
           echo "| Metric | Value |"
           echo "|--------|-------|"
@@ -2261,6 +2273,8 @@ runs:
           echo "| **Compiler** | \`${CLANG_VERSION:-unknown}\` |"
           echo "| **Artifact Name** | \`${{ env.ZIP_NAME }}\` |"
           echo "| **AnyKernel3 SHA256** | \`${{ steps.create_zip.outputs.zip_sha256 }}\` |"
+          echo ""
+          echo "</details>"
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Debug Artifacts
