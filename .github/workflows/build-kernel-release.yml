@@ -487,29 +487,25 @@ jobs:
           fi
           
           {
-            cat << 'EOF'
-          ## 🎯 Build Plan
-          
-          **Target:** ${{ inputs.op_model }}  
-          **Target Model:** ${{ inputs.op_target_model != '' && inputs.op_target_model || 'all' }}  
-          **Devices:** ${{ steps.set-matrix.outputs.count }}  
-          
-          **Configuration:**
-          EOF
-          
-            echo "- KSU Config: $ksu_display"
-            echo "- Build Timestamp: $build_ts_display"
-          
-            cat << 'EOF'
-          - Optimization: ${{ inputs.optimize_level }}
-          - ADIOS I/O Scheduler: ${{ inputs.enable_adios && '✅ Yes' || '❌ No' }}
-          - Clean Build/No Ccache: ${{ inputs.clean_build && '✅ Yes' || '❌ No' }}
-          - Create Release: ${{ inputs.make_release && '✅ Yes' || '❌ No' }}
-          - Create Debug Artifacts: ${{ inputs.debug && '✅ Yes' || '❌ No' }}
-          - Sync toolchains: ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅ Yes' || '❌ No' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' (auto for release)' || '' }}
-          
-          **SUSFS Configuration:**
-          EOF
+            echo "## 🎯 Build Plan"
+            echo ""
+            echo "> **${{ inputs.op_model }}** · **${{ steps.set-matrix.outputs.count }}** device(s) · KSU \`$ksu_type\` · \`${{ inputs.optimize_level }}\`${{ inputs.make_release && ' · 📦 release' || '' }}"
+            echo ""
+            echo "| Setting | Value |"
+            echo "|---------|-------|"
+            echo "| 🎯 Target | \`${{ inputs.op_model }}\` · model \`${{ inputs.op_target_model != '' && inputs.op_target_model || 'all' }}\` · **${{ steps.set-matrix.outputs.count }}** device(s) |"
+            echo "| 🧩 KSU | $ksu_display |"
+            echo "| ⏱️ Timestamp | $build_ts_display |"
+            echo "| ⚙️ Optimization | \`${{ inputs.optimize_level }}\` |"
+            echo "| 🧹 Clean build (no ccache) | ${{ inputs.clean_build && '✅' || '❌' }} |"
+            echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
+            echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
+            echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
+            echo ""
+            echo "**SUSFS refs** _(per kernel, resolved at run time)_"
+            echo ""
+            echo "| Kernel | Ref |"
+            echo "|--------|-----|"
           } >> "$GITHUB_STEP_SUMMARY"
           
           # Display SUSFS config for each kernel version
@@ -539,13 +535,13 @@ jobs:
             
             if [ -z "$value" ]; then
               # Auto: no input > hash resolved by ls-remote
-              echo "- $key: 🔄 auto (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
+              echo "| \`$key\` | 🔄 auto \`$fetched_hash\` |" >> $GITHUB_STEP_SUMMARY
             elif [[ "$value" =~ ^[0-9a-f]{40}$ ]]; then
               # Manual 40-char hash > direct passthrough
-              echo "- $key: 📌 \`$value\`" >> $GITHUB_STEP_SUMMARY
+              echo "| \`$key\` | 📌 \`$value\` |" >> $GITHUB_STEP_SUMMARY
             else
               # Branch name > show branch + resolved hash
-              echo "- $key: 🔀 \`$value\` (\`$fetched_hash\`)" >> $GITHUB_STEP_SUMMARY
+              echo "| \`$key\` | 🔀 \`$value\` (\`$fetched_hash\`) |" >> $GITHUB_STEP_SUMMARY
             fi
           done
           
