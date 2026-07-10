@@ -1073,7 +1073,14 @@ jobs:
           ---
           
           ## 📦 Built Devices (${#device_info[@]} total)
-          
+
+          **Feature key:** 🐦 HMBIRD · ඞ SusFS · 🚀 BBR · 🛡️ BBG · 🌐 TTL · 🧱 IP_SET & IPv6 NAT · 🔧 Unicode Fix · 💻 Droidspaces · 🔃 NTSync
+
+          > 6.12 kernels ship a leaner set (no BBG/Droidspaces/NTSync); SM8750/MT6991 devices add HMBIRD.
+
+          <details>
+          <summary>📥 Expand the full list of ${#device_info[@]} device downloads</summary>
+
           | Model | OS Version | Kernel Version | Features |
           |-------|------------|----------------|----------|
           EOF
@@ -1106,8 +1113,7 @@ jobs:
               # Build features string based on boolean values
               [[ "$hmbird" == "true" ]] && features+=("🐦 HMBIRD")
               [[ "$susfs" == "true" ]] && features+=("ඞ SusFS")
-              [[ "$bbr" == "true" ]] && features+=("🚀 BBR")
-              [[ "$bbr3" == "true" ]] && features+=("🚀 BBRv3")
+              { [[ "$bbr" == "true" ]] || [[ "$bbr3" == "true" ]]; } && features+=("🚀 BBR")
               [[ "$bbg" == "true" ]] && features+=("🛡️ BBG")
               [[ "$ttl" == "true" ]] && features+=("🌐 TTL")
               [[ "$ip_set" == "true" ]] && features+=("🧱 IP_SET & IPv6 NAT")
@@ -1159,9 +1165,11 @@ jobs:
           fi
           
           cat << EOF >> release_notes.md
-          
+
+          </details>
+
           ---
-          
+
           ## 🔧 Build Configuration
           
           | Component | Version/Setting |
@@ -1217,21 +1225,21 @@ jobs:
           cat << EOF >> release_notes.md
           ### 🛡️ Security & Privacy
           - **Baseband Guard (BBG)** - LSM-based baseband security
-          - **SUSFS Hide Features**:
+          - **SUSFS Hide Features** (as shipped in the defconfig):
             - ✅ SUS_PATH - Hide suspicious paths
-            - ✅ SUS_MOUNT - Hide mount points (No Cli Support)
-            - ✅ SUS_KSTAT - Spoof kernel statistics
-            - ✅ SPOOF_UNAME - Kernel version spoofing
-            - ✅ SPOOF_CMDLINE - Boot parameters spoofing
+            - ✅ SUS_MOUNT - Hide mount points *(no CLI management yet)*
+            - ✅ SUS_KSTAT - Spoof file stat (kstat)
+            - ✅ SPOOF_CMDLINE - Boot cmdline / bootconfig spoofing
             - ✅ OPEN_REDIRECT - File access redirection
-            - ✅ SUS_MAP - Memory mapping protection
-            - ✅ AVC_SPOOF - Spoof Procfs avc denial logs
+            - ✅ SUS_MAP - Memory-map (/proc/*/maps) hiding
+            - ✅ ENABLE_LOG - susfs kernel logging
+            - ✅ AVC_SPOOF - Spoof procfs AVC denial logs
+            - ⬜ SPOOF_UNAME - kernel uname spoofing *(disabled in this build)*
           - **Ptrace Leak Fix** - For kernels < 5.16
           - **Unicode Fix** - Prevent path traversal and other detections using non-printable Unicode codepoints [Experimental]
           
           ### 🚀 Performance & Networking
-          - **BBRv1** - Improved TCP congestion control
-          - **BBRv3** - Improved TCP congestion control
+          - **BBR** - Improved TCP congestion control
           - **CAKE and PIE qdisc Support** - Better Net Schedulers
           - **Wireguard** - Built-in VPN support
           - **IP Set & IPv6 NAT Support** - Advanced firewall capabilities and IPv6 NAT Support
@@ -1254,7 +1262,7 @@ jobs:
           ### Official Manager
           EOF
           cat << EOF >> release_notes.md
-          - **SukiSU Manager**
+          - **SukiSU Manager** *(install the version matching the kernel — see \`SukiSU Version\` in Build Configuration above)*
             → [GitHub Release](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
           EOF
           cat << EOF >> release_notes.md
