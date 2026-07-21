@@ -805,7 +805,7 @@ runs:
           
           local aria_log_flags="--quiet --summary-interval=0"
           if [ "${{ inputs.debug }}" = "true" ]; then
-              aria_log_flags="--summary-interval=5" # Show progress every 5s in debug
+              aria_log_flags="--summary-interval=5"
           fi
           
           local aria2_headers=(
@@ -854,7 +854,6 @@ runs:
           local max_attempts=3
           local attempt=1
           
-          # Build git clone args
           local clone_args=(--branch "$branch")
           if [ "$depth" != "0" ] && [ -n "$depth" ]; then
             clone_args+=(--depth "$depth")
@@ -863,7 +862,6 @@ runs:
           while [ $attempt -le $max_attempts ]; do
             echo "🔄 Attempt $attempt/$max_attempts: cloning $url ($branch)${depth:+ [depth=$depth]}"
             
-            # Clone with dynamic args
             git clone "${clone_args[@]}" "$url" "$dir" && {
               echo "✅ Success"
               return 0
@@ -880,8 +878,14 @@ runs:
         
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
 
+        # Bouteillepleine kernel_patches is used for BBRv3 for all Android/kernel versions.
+        # It is also used for ADIOS patches when enable_adios=true.
+        retry_clone "https://github.com/Bouteillepleine/kernel_patches.git" "main" "1" "bouton_kernel_patches"
+
+        echo "BOUTEILLE_KERNEL_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches" >> "$GITHUB_ENV"
+        echo "BOUTEILLE_BBR3_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches/common/bbrv3" >> "$GITHUB_ENV"
+
         if [ "${{ inputs.enable_adios }}" = "true" ]; then
-          retry_clone "https://github.com/Bouteillepleine/kernel_patches.git" "main" "1" "bouton_kernel_patches"
           echo "ADIOS_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches/experimental" >> "$GITHUB_ENV"
         fi
         
@@ -893,6 +897,7 @@ runs:
           fi
           echo "SUSFS_COMMIT_SHA=$SUSFS_BRANCH" >> $GITHUB_ENV
         fi
+
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
 
