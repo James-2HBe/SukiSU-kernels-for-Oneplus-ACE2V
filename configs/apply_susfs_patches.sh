@@ -1485,6 +1485,49 @@ exit 1
   fi
 fi
 
+# --- SUSFS <-> set_nameidata() arity compat --------------------------------
+# susfs's CONFIG_KSU_SUSFS_OPEN_REDIRECT hunks re-enter the lookup with
+#     set_nameidata(nd, old_dfd, fake_filename, NULL);
+# but that 4th parameter (const struct path *root) only arrived in v5.14. On
+# android12-5.10 the tree still declares the 3-arg form, and susfs's own patch
+# proves it knows that -- its SUS_PATH hunk edits the body of
+#     static void set_nameidata(struct nameidata *p, int dfd, struct filename *name)
+# The call sites were copy-pasted from the newer branches, so the 5.10 patch
+# applies with every hunk clean and only blows up at compile time:
+#     fs/namei.c: error: too many arguments to function call, expected 3, have 4
+# Key off the arity the tree actually declares rather than the kernel version, so
+# this self-heals if susfs fixes it upstream or a tree backports the root param.
+# Idempotent, and a no-op on every 4-arg tree.
+#
+# The declaration is one line up to 5.13 but wraps across two from 5.14
+#     static inline void set_nameidata(struct nameidata *p, int dfd, struct filename *name,
+#                               const struct path *root)
+# so collect it up to the closing paren before counting -- reading only the first
+# line would count the trailing comma and get the right answer for the wrong
+# reason, and would break outright on any other wrapping.
+if [ -f fs/namei.c ] && grep -q 'set_nameidata(nd, old_dfd, fake_filename, NULL)' fs/namei.c; then
+  nd_decl=$(awk '/void[ \t]+set_nameidata[ \t]*\(/ { f = 1 }
+                 f { printf "%s ", $0; if (/\)/) exit }' fs/namei.c)
+  # 2 commas = 3 params (<= 5.13), 3 commas = 4 params (>= 5.14)
+  nd_commas=$(printf '%s' "$nd_decl" | tr -cd ',' | wc -c)
+
+  if [ -z "$nd_decl" ]; then
+echo "::error::susfs added 4-arg set_nameidata() calls but no set_nameidata() declaration was found in fs/namei.c"
+exit 1
+  elif [ "$nd_commas" -eq 2 ]; then
+sed -i 's/set_nameidata(nd, old_dfd, fake_filename, NULL)/set_nameidata(nd, old_dfd, fake_filename)/g' fs/namei.c
+
+if grep -q 'set_nameidata(nd, old_dfd, fake_filename, NULL)' fs/namei.c; then
+  echo "::error::Failed to drop the root argument from susfs's set_nameidata() calls in fs/namei.c"
+  exit 1
+fi
+
+echo "Dropped susfs's 5.14+ root argument from set_nameidata() OPEN_REDIRECT calls (tree declares the 3-arg form)"
+  else
+echo "fs/namei.c declares the 4-arg set_nameidata(); leaving susfs OPEN_REDIRECT calls as-is"
+  fi
+fi
+
 if [ "$fake_patched" = "1" ]; then
   if [ "$ANDROID_VER_LOCAL" = "android15" ] && [ "$KERNEL_VER_LOCAL" = "6.6" ]; then
 sed -i \
